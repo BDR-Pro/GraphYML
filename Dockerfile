@@ -1,18 +1,15 @@
 # Base image
-FROM python:3.13-alpine
+FROM python:3.10-slim
 
 # Install build dependencies for scikit-learn
-RUN apk update && apk add --no-cache \
-    build-base \
+RUN apt-get update && apt-get install -y \
+    build-essential \
     libffi-dev \
     gcc \
     g++ \
     python3-dev \
-    py3-pip \
     curl \
-    linux-headers \
-    openblas-dev \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -29,4 +26,5 @@ ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 EXPOSE 8501
 
 # Run the Streamlit app
-CMD ["streamlit", "run", "db.py", "--server.port=8501", "--server.enableCORS=false"]
+CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.enableCORS=false"]
+
