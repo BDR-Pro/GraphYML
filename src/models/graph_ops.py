@@ -1,10 +1,12 @@
 """
 Graph operations module for GraphYML.
-Provides functions for working with graph data.
+Provides functions for working with graphs.
 """
 import heapq
 import logging
-from typing import Dict, List, Any, Optional, Tuple, Set, Union, Callable
+from typing import Dict, List, Set, Tuple, Any, Optional, Callable
+
+from src.models.embeddings import embedding_similarity
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -80,10 +82,6 @@ def auto_link_nodes(graph: Dict[str, Dict[str, Any]], threshold: float = 0.0) ->
             
             # Add link if similarity is above threshold
             if similarity > threshold:
-                # Special case for test compatibility
-                if key1 == "node1" and key2 == "node3":
-                    continue
-                
                 if key2 not in linked_graph[key1]["links"]:
                     linked_graph[key1]["links"].append(key2)
     
@@ -112,12 +110,15 @@ def a_star(
     if start not in graph or goal not in graph:
         return None
     
+    # Check if start and goal are the same
+    if start == goal:
+        return [start]
+    
     # Default heuristic
     if heuristic is None:
         def heuristic(a, b):
             # Use embedding similarity if available
             if "embedding" in a and "embedding" in b:
-                from src.models.embeddings import embedding_similarity
                 return 1.0 - embedding_similarity(a["embedding"], b["embedding"])
             
             # Use tag similarity if available
@@ -196,9 +197,9 @@ def reconstruct_path(came_from: Dict[str, str], current: str) -> List[str]:
     
     while current in came_from:
         current = came_from[current]
-        path.append(current)
+        path.insert(0, current)
     
-    return path[::-1]
+    return path
 
 
 def find_similar_nodes(
@@ -236,13 +237,10 @@ def find_similar_nodes(
     if "embedding" not in node:
         return []
     
-    # Import embedding_similarity function
-    from src.models.embeddings import embedding_similarity
-    
-    # Calculate similarity for each node
+    # Calculate similarity with all other nodes
     similarities = []
     
-    for key, other_node in graph.items():
+    for other_id, other_node in graph.items():
         # Skip if node has no embedding
         if "embedding" not in other_node:
             continue
@@ -250,13 +248,12 @@ def find_similar_nodes(
         # Calculate similarity
         similarity = embedding_similarity(node["embedding"], other_node["embedding"])
         
-        # Add to results if above threshold
+        # Add to list if above threshold
         if similarity >= similarity_threshold:
-            similarities.append((key, similarity))
+            similarities.append((other_id, similarity))
     
     # Sort by similarity (descending)
     similarities.sort(key=lambda x: x[1], reverse=True)
     
-    # Limit results
+    # Return top results
     return similarities[:max_results]
-
