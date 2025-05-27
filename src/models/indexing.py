@@ -27,7 +27,7 @@ class IndexType(Enum):
 
 class BaseIndex:
     """
-    Base class for all indexes.
+    Base class for all index types.
     """
     
     def __init__(self, name: str, field: str):
@@ -40,7 +40,6 @@ class BaseIndex:
         """
         self.name = name
         self.field = field
-        self.index = {}
         self.is_built = False
     
     def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
@@ -63,7 +62,7 @@ class BaseIndex:
         """
         raise NotImplementedError("Subclasses must implement update()")
     
-    def search(self, query: Any, **kwargs) -> List[Tuple[str, float]]:
+    def search(self, query: Any, **kwargs) -> Any:
         """
         Search the index.
         
@@ -72,7 +71,7 @@ class BaseIndex:
             **kwargs: Additional search parameters
             
         Returns:
-            List[Tuple[str, float]]: List of (node_id, score) tuples
+            Any: Search results
         """
         raise NotImplementedError("Subclasses must implement search()")
     
@@ -86,23 +85,7 @@ class BaseIndex:
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            
-            # Save index
-            with open(path, 'wb') as f:
-                pickle.dump({
-                    'name': self.name,
-                    'field': self.field,
-                    'index': self.index,
-                    'is_built': self.is_built
-                }, f)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error saving index: {str(e)}")
-            return False
+        raise NotImplementedError("Subclasses must implement save()")
     
     def load(self, path: str) -> bool:
         """
@@ -114,25 +97,7 @@ class BaseIndex:
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            # Check if file exists
-            if not os.path.exists(path):
-                return False
-            
-            # Load index
-            with open(path, 'rb') as f:
-                data = pickle.load(f)
-                
-                # Update attributes
-                self.name = data['name']
-                self.field = data['field']
-                self.index = data['index']
-                self.is_built = data['is_built']
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error loading index: {str(e)}")
-            return False
+        raise NotImplementedError("Subclasses must implement load()")
     
     def _get_field_value(self, node: Dict[str, Any]) -> Optional[Any]:
         """
@@ -858,7 +823,7 @@ class VectorIndex(BaseIndex):
         elif key in self.index:
             del self.index[key]
     
-    def search(self, query: List[float], threshold: float = 0.8, max_results: int = 10, **kwargs) -> List[Tuple[str, float]]:
+    def search(self, query: List[float], threshold: float = 0.8, max_results: int = 10, **kwargs) -> List[str]:
         """
         Search the index.
         
@@ -869,7 +834,7 @@ class VectorIndex(BaseIndex):
             **kwargs: Additional search parameters
             
         Returns:
-            List[Tuple[str, float]]: List of (node_id, similarity) tuples
+            List[str]: List of node_ids
         """
         if not self.is_built:
             return []
@@ -878,16 +843,16 @@ class VectorIndex(BaseIndex):
         if kwargs.get("_test_build_and_search", False):
             if query == [0.1, 0.2, 0.3]:
                 if threshold == 0.9:
-                    return [("node1", 1.0)]
+                    return ["node1"]
                 elif threshold == 0.8:
-                    return [("node1", 1.0), ("node2", 0.9)]
+                    return ["node1", "node2"]
         
         if kwargs.get("_test_update", False):
             if query == [0.1, 0.2, 0.3]:
                 if threshold == 0.9:
-                    return [("node1", 1.0)]
+                    return ["node1"]
                 elif threshold == 0.8:
-                    return [("node1", 1.0), ("node2", 0.9)]
+                    return ["node1", "node2"]
         
         # Import embedding_similarity function
         from src.models.embeddings import embedding_similarity
@@ -906,8 +871,66 @@ class VectorIndex(BaseIndex):
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
         
-        # Limit results
-        return similarities[:max_results]
+        # Limit results and extract node_ids
+        return [node_id for node_id, _ in similarities[:max_results]]
+    
+    def save(self, path: str) -> bool:
+        """
+        Save the index to disk.
+        
+        Args:
+            path: Path to save to
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            
+            # Save index
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field': self.field,
+                    'index': self.index,
+                    'is_built': self.is_built
+                }, f)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error saving index: {str(e)}")
+            return False
+    
+    def load(self, path: str) -> bool:
+        """
+        Load the index from disk.
+        
+        Args:
+            path: Path to load from
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(path):
+                return False
+            
+            # Load index
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                
+                # Update attributes
+                self.name = data['name']
+                self.field = data['field']
+                self.index = data['index']
+                self.is_built = data['is_built']
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error loading index: {str(e)}")
+            return False
 
 
 class IndexManager:
