@@ -4,7 +4,9 @@ Provides functions for working with embeddings.
 """
 import math
 import logging
-from typing import List, Dict, Any, Optional, Union, Callable
+import numpy as np
+import requests
+from typing import List, Dict, Any, Optional, Union, Callable, Tuple
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -15,16 +17,25 @@ class EmbeddingGenerator:
     Class for generating embeddings.
     """
     
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the embedding generator.
         
         Args:
-            model: Model to use for embedding generation
+            config: Configuration for embedding generation
+                - ollama_url: URL for Ollama API
+                - ollama_model: Model to use for Ollama API
+                - embedding_dimension: Dimension of embeddings
+                - allow_fallback: Whether to allow fallback to simple embeddings
         """
-        self.model = model
+        self.config = config or {
+            "ollama_url": "http://localhost:11434/api/embeddings",
+            "ollama_model": "llama2",
+            "embedding_dimension": 384,
+            "allow_fallback": True
+        }
     
-    def generate(self, text: str) -> List[float]:
+    def generate_embedding(self, text: str) -> Tuple[List[float], Optional[str]]:
         """
         Generate an embedding for text.
         
@@ -32,11 +43,86 @@ class EmbeddingGenerator:
             text: Text to generate embedding for
             
         Returns:
-            List[float]: Embedding
+            Tuple[List[float], Optional[str]]: Embedding and error message (if any)
         """
-        return generate_embedding(text, self.model)
+        # Try to generate embedding using Ollama API
+        embedding, error = self._generate_ollama_embedding(text)
+        
+        # Fall back to simple embedding if Ollama fails
+        if embedding is None and self.config.get("allow_fallback", True):
+            embedding, error = self._generate_fallback_embedding(text)
+        
+        return embedding, error
     
-    def batch_generate(self, texts: List[str]) -> List[List[float]]:
+    def _generate_ollama_embedding(self, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
+        """
+        Generate an embedding using Ollama API.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            Tuple[Optional[List[float]], Optional[str]]: Embedding and error message (if any)
+        """
+        try:
+            # Make API request
+            response = requests.post(
+                self.config["ollama_url"],
+                json={"model": self.config["ollama_model"], "prompt": text},
+                timeout=30
+            )
+            
+            # Check if request was successful
+            if response.status_code == 200:
+                # Parse response
+                data = response.json()
+                
+                # Return embedding
+                return data["embedding"], None
+            else:
+                # Return error
+                error = f"Ollama API error: {response.status_code} - {response.text}"
+                logger.error(error)
+                return None, error
+        except Exception as e:
+            # Return error
+            error = f"Ollama API error: {str(e)}"
+            logger.error(error)
+            return None, error
+    
+    def _generate_fallback_embedding(self, text: str) -> Tuple[List[float], str]:
+        """
+        Generate a fallback embedding.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            Tuple[List[float], str]: Embedding and error message
+        """
+        # Generate a simple embedding
+        embedding = generate_embedding(text)
+        
+        # Resize to desired dimension
+        dimension = self.config.get("embedding_dimension", 384)
+        
+        if len(embedding) < dimension:
+            # Pad with zeros
+            embedding = embedding + [0.0] * (dimension - len(embedding))
+        else:
+            # Truncate
+            embedding = embedding[:dimension]
+        
+        # Normalize embedding
+        norm = np.linalg.norm(embedding)
+        
+        if norm > 0:
+            embedding = [x / norm for x in embedding]
+        
+        # Return embedding with warning
+        return embedding, "Using fallback embedding generator"
+    
+    def batch_generate(self, texts: List[str]) -> List[Tuple[List[float], Optional[str]]]:
         """
         Generate embeddings for multiple texts.
         
@@ -44,9 +130,9 @@ class EmbeddingGenerator:
             texts: Texts to generate embeddings for
             
         Returns:
-            List[List[float]]: List of embeddings
+            List[Tuple[List[float], Optional[str]]]: List of embeddings and error messages
         """
-        return [self.generate(text) for text in texts]
+        return [self.generate_embedding(text) for text in texts]
 
 
 def embedding_similarity(embedding1: List[float], embedding2: List[float]) -> float:
@@ -121,16 +207,57 @@ def generate_embedding(text: str, model: Optional[str] = None) -> List[float]:
     return embedding
 
 
-def batch_generate_embeddings(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+def batch_generate_embeddings(
+    graph: Dict[str, Dict[str, Any]],
+    embedding_generator: Optional[EmbeddingGenerator] = None
+) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """
-    Generate embeddings for multiple texts.
+    Generate embeddings for nodes in a graph.
     
     Args:
-        texts: Texts to generate embeddings for
-        model: Model to use for embedding generation
+        graph: Graph to generate embeddings for
+        embedding_generator: Embedding generator to use
         
     Returns:
-        List[List[float]]: List of embeddings
+        Tuple[Dict[str, Dict[str, Any]], List[str]]: Updated graph and list of errors
     """
-    return [generate_embedding(text, model) for text in texts]
+    # Create a copy of the graph
+    updated_graph = {}
+    errors = []
+    
+    # Create embedding generator if not provided
+    if embedding_generator is None:
+        embedding_generator = EmbeddingGenerator()
+    
+    # Generate embeddings for each node
+    for key, node in graph.items():
+        # Create a copy of the node
+        updated_graph[key] = node.copy()
+        
+        # Skip if node already has embedding
+        if "embedding" in node:
+            continue
+        
+        # Combine text fields
+        text = ""
+        
+        if "title" in node:
+            text += node["title"] + " "
+        
+        if "overview" in node:
+            text += node["overview"] + " "
+        
+        if "tagline" in node:
+            text += node["tagline"]
+        
+        # Generate embedding
+        embedding, error = embedding_generator.generate_embedding(text.strip())
+        
+        if embedding is not None:
+            updated_graph[key]["embedding"] = embedding
+        
+        if error is not None:
+            errors.append(f"Error generating embedding for {key}: {error}")
+    
+    return updated_graph, errors
 
