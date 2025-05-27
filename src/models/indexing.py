@@ -1,60 +1,125 @@
 """
-Indexing support for GraphYML.
-Provides indexes for efficient querying of graph nodes.
+Indexing system for GraphYML.
+Provides different types of indexes for efficient querying.
 """
+from enum import Enum
+from typing import Dict, List, Any, Optional, Tuple, Set, Union
 import os
 import json
-import time
-import threading
-from enum import Enum
-from typing import Dict, List, Any, Set, Optional, Tuple, Callable, Union
-from pathlib import Path
-
+import pickle
 import numpy as np
-from sklearn.neighbors import BallTree
 
 
 class IndexType(Enum):
-    """Types of indexes supported."""
-    HASH = "hash"  # Exact match lookups
-    BTREE = "btree"  # Range queries
-    FULLTEXT = "fulltext"  # Text search
-    VECTOR = "vector"  # Embedding similarity
+    """Types of indexes supported by the system."""
+    HASH = "hash"  # For exact matches
+    BTREE = "btree"  # For range queries
+    FULLTEXT = "fulltext"  # For text search
+    VECTOR = "vector"  # For embedding similarity
 
 
-class Index:
-    """Base class for all index types."""
+class BaseIndex:
+    """
+    Base class for all index implementations.
+    Defines the common interface that all indexes must implement.
+    """
     
-    def __init__(
-        self, 
-        name: str, 
-        field_path: str, 
-        index_type: IndexType
-    ):
+    def __init__(self, name: str, field_path: str):
         """
-        Initialize an index.
+        Initialize the base index.
         
         Args:
             name: Index name
-            field_path: Path to the field to index (dot notation)
-            index_type: Type of index
+            field_path: Path to the field to index
         """
         self.name = name
         self.field_path = field_path
-        self.index_type = index_type
-        self.last_updated = 0
-        self.is_dirty = True
+        self.index_type = None
+    
+    def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Build the index from the graph.
+        
+        Args:
+            graph: Graph dictionary
+            
+        Raises:
+            NotImplementedError: Subclasses must implement this method
+        """
+        raise NotImplementedError("Subclasses must implement build()")
+    
+    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
+        """
+        Update the index with a new or modified node.
+        
+        Args:
+            key: Node key
+            node: Node data
+            is_delete: Whether this is a deletion
+            
+        Raises:
+            NotImplementedError: Subclasses must implement this method
+        """
+        raise NotImplementedError("Subclasses must implement update()")
+    
+    def search(self, query: Any, limit: int = 10, threshold: float = None) -> List[Union[str, Tuple[str, float]]]:
+        """
+        Search the index.
+        
+        Args:
+            query: Search query
+            limit: Maximum number of results
+            threshold: Optional threshold for similarity-based searches
+            
+        Returns:
+            List of matching keys or (key, score) tuples
+            
+        Raises:
+            NotImplementedError: Subclasses must implement this method
+        """
+        raise NotImplementedError("Subclasses must implement search()")
+    
+    def save(self, path: str) -> bool:
+        """
+        Save the index to disk.
+        
+        Args:
+            path: Path to save to
+            
+        Returns:
+            bool: Success flag
+            
+        Raises:
+            NotImplementedError: Subclasses must implement this method
+        """
+        raise NotImplementedError("Subclasses must implement save()")
+    
+    def load(self, path: str) -> bool:
+        """
+        Load the index from disk.
+        
+        Args:
+            path: Path to load from
+            
+        Returns:
+            bool: Success flag
+            
+        Raises:
+            NotImplementedError: Subclasses must implement this method
+        """
+        raise NotImplementedError("Subclasses must implement load()")
     
     def get_field_value(self, node: Dict[str, Any]) -> Any:
         """
         Get the value of the indexed field from a node.
         
         Args:
-            node: Node to extract value from
+            node: Node data
             
         Returns:
-            Any: Field value or None if not found
+            Any: Field value
         """
+        # Handle nested fields with dot notation
         parts = self.field_path.split('.')
         value = node
         
@@ -65,137 +130,192 @@ class Index:
                 return None
         
         return value
-    
-    def build(self, graph: Dict[str, Dict[str, Any]]):
-        """
-        Build the index from the graph.
-        
-        Args:
-            graph: Graph to index
-        """
-        raise NotImplementedError("Subclasses must implement build()")
-    
-    def search(self, query: Any) -> List[str]:
-        """
-        Search the index.
-        
-        Args:
-            query: Search query
-            
-        Returns:
-            List[str]: List of matching node keys
-        """
-        raise NotImplementedError("Subclasses must implement search()")
-    
-    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False):
-        """
-        Update the index for a single node.
-        
-        Args:
-            key: Node key
-            node: Node data
-            is_delete: Whether this is a deletion
-        """
-        raise NotImplementedError("Subclasses must implement update()")
-    
-    def save(self, path: Path):
-        """
-        Save the index to disk.
-        
-        Args:
-            path: Path to save to
-        """
-        raise NotImplementedError("Subclasses must implement save()")
-    
-    def load(self, path: Path) -> bool:
-        """
-        Load the index from disk.
-        
-        Args:
-            path: Path to load from
-            
-        Returns:
-            bool: Success flag
-        """
-        raise NotImplementedError("Subclasses must implement load()")
 
 
-class HashIndex(Index):
-    """Hash index for exact match lookups."""
+class HashIndex(BaseIndex):
+    """
+    Hash index for exact matches.
+    Maps field values to sets of node keys.
+    """
     
     def __init__(self, name: str, field_path: str):
         """
-        Initialize a hash index.
+        Initialize the hash index.
         
         Args:
             name: Index name
             field_path: Path to the field to index
         """
-        super().__init__(name, field_path, IndexType.HASH)
-        self.index = {}  # value -> set of node keys
+        super().__init__(name, field_path)
+        self.index_type = IndexType.HASH
+        self.index = {}  # {field_value: set(node_keys)}
     
-    def build(self, graph: Dict[str, Dict[str, Any]]):
+    def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
         """
         Build the index from the graph.
         
         Args:
-            graph: Graph to index
+            graph: Graph dictionary
         """
         self.index = {}
         
         for key, node in graph.items():
-            value = self.get_field_value(node)
-            
-            if value is not None:
-                # Handle list values
-                if isinstance(value, list):
-                    for item in value:
-                        self._add_to_index(item, key)
-                else:
-                    self._add_to_index(value, key)
-        
-        self.last_updated = time.time()
-        self.is_dirty = False
+            self.update(key, node)
     
-    def _add_to_index(self, value: Any, key: str):
+    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
         """
-        Add a value to the index.
+        Update the index with a new or modified node.
         
         Args:
-            value: Value to index
             key: Node key
+            node: Node data
+            is_delete: Whether this is a deletion
         """
-        # Convert value to hashable type
-        if isinstance(value, (list, dict)):
-            value = str(value)
+        if is_delete:
+            # Remove from all index entries
+            for value_set in self.index.values():
+                if key in value_set:
+                    value_set.remove(key)
+            return
         
-        if value not in self.index:
-            self.index[value] = set()
+        # Get field value
+        value = self.get_field_value(node)
         
-        self.index[value].add(key)
+        if value is None:
+            return
+        
+        # Handle list values
+        if isinstance(value, list):
+            for item in value:
+                # Convert to string for hashability
+                item_str = str(item)
+                
+                if item_str not in self.index:
+                    self.index[item_str] = set()
+                
+                self.index[item_str].add(key)
+        else:
+            # Convert to string for hashability
+            value_str = str(value)
+            
+            if value_str not in self.index:
+                self.index[value_str] = set()
+            
+            self.index[value_str].add(key)
     
-    def search(self, query: Any) -> List[str]:
+    def search(self, query: Any, limit: int = 10, threshold: float = None) -> List[str]:
         """
         Search the index for exact matches.
         
         Args:
-            query: Value to search for
+            query: Search query
+            limit: Maximum number of results
+            threshold: Not used for hash index
             
         Returns:
-            List[str]: List of matching node keys
+            List of matching keys
         """
-        # Convert query to hashable type
-        if isinstance(query, (list, dict)):
-            query = str(query)
+        # Convert query to string for hashability
+        query_str = str(query)
         
-        if query in self.index:
-            return list(self.index[query])
+        if query_str in self.index:
+            # Convert set to list and limit results
+            return list(self.index[query_str])[:limit]
         
         return []
     
-    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False):
+    def save(self, path: str) -> bool:
         """
-        Update the index for a single node.
+        Save the index to disk.
+        
+        Args:
+            path: Path to save to
+            
+        Returns:
+            bool: Success flag
+        """
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field_path': self.field_path,
+                    'index_type': self.index_type.value,
+                    'index': self.index
+                }, f)
+            return True
+        except Exception as e:
+            print(f"Error saving index {self.name}: {e}")
+            return False
+    
+    def load(self, path: str) -> bool:
+        """
+        Load the index from disk.
+        
+        Args:
+            path: Path to load from
+            
+        Returns:
+            bool: Success flag
+        """
+        try:
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                self.name = data['name']
+                self.field_path = data['field_path']
+                self.index_type = IndexType(data['index_type'])
+                self.index = data['index']
+            return True
+        except Exception as e:
+            print(f"Error loading index {self.name}: {e}")
+            return False
+
+
+class BTreeIndex(BaseIndex):
+    """
+    B-tree index for range queries.
+    Maps field values to sets of node keys, maintaining sorted order.
+    """
+    
+    def __init__(self, name: str, field_path: str):
+        """
+        Initialize the B-tree index.
+        
+        Args:
+            name: Index name
+            field_path: Path to the field to index
+        """
+        super().__init__(name, field_path)
+        self.index_type = IndexType.BTREE
+        self.index = {}  # {field_value: set(node_keys)}
+        self.sorted_keys = []  # Sorted list of field values
+    
+    def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Build the index from the graph.
+        
+        Args:
+            graph: Graph dictionary
+        """
+        self.index = {}
+        
+        for key, node in graph.items():
+            self.update(key, node)
+        
+        # Sort keys
+        self._sort_keys()
+    
+    def _sort_keys(self) -> None:
+        """Sort the keys in the index."""
+        try:
+            # Try to sort as numbers
+            self.sorted_keys = sorted(self.index.keys(), key=float)
+        except (ValueError, TypeError):
+            # Fall back to string sorting
+            self.sorted_keys = sorted(self.index.keys())
+    
+    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
+        """
+        Update the index with a new or modified node.
         
         Args:
             key: Node key
@@ -203,48 +323,113 @@ class HashIndex(Index):
             is_delete: Whether this is a deletion
         """
         if is_delete:
-            # Remove from all value sets
+            # Remove from all index entries
             for value_set in self.index.values():
                 if key in value_set:
                     value_set.remove(key)
             
-            # Clean up empty sets
-            self.index = {k: v for k, v in self.index.items() if v}
-        else:
-            value = self.get_field_value(node)
-            
-            if value is not None:
-                # Handle list values
-                if isinstance(value, list):
-                    for item in value:
-                        self._add_to_index(item, key)
-                else:
-                    self._add_to_index(value, key)
+            # Resort keys
+            self._sort_keys()
+            return
         
-        self.is_dirty = True
+        # Get field value
+        value = self.get_field_value(node)
+        
+        if value is None:
+            return
+        
+        # Handle list values
+        if isinstance(value, list):
+            for item in value:
+                # Convert to string for hashability
+                item_str = str(item)
+                
+                if item_str not in self.index:
+                    self.index[item_str] = set()
+                
+                self.index[item_str].add(key)
+        else:
+            # Convert to string for hashability
+            value_str = str(value)
+            
+            if value_str not in self.index:
+                self.index[value_str] = set()
+            
+            self.index[value_str].add(key)
+        
+        # Resort keys
+        self._sort_keys()
     
-    def save(self, path: Path):
+    def search(self, query: Dict[str, Any], limit: int = 10, threshold: float = None) -> List[str]:
+        """
+        Search the index for range queries.
+        
+        Args:
+            query: Search query with operators (e.g., {'min': 10, 'max': 20})
+            limit: Maximum number of results
+            threshold: Not used for B-tree index
+            
+        Returns:
+            List of matching keys
+        """
+        results = set()
+        
+        # Handle range query
+        if 'min' in query and 'max' in query:
+            min_val = str(query['min'])
+            max_val = str(query['max'])
+            
+            # Find keys in range
+            for key in self.sorted_keys:
+                if min_val <= key <= max_val:
+                    results.update(self.index[key])
+        
+        # Handle greater than query
+        elif 'min' in query:
+            min_val = str(query['min'])
+            
+            # Find keys greater than min
+            for key in self.sorted_keys:
+                if key >= min_val:
+                    results.update(self.index[key])
+        
+        # Handle less than query
+        elif 'max' in query:
+            max_val = str(query['max'])
+            
+            # Find keys less than max
+            for key in self.sorted_keys:
+                if key <= max_val:
+                    results.update(self.index[key])
+        
+        # Convert set to list and limit results
+        return list(results)[:limit]
+    
+    def save(self, path: str) -> bool:
         """
         Save the index to disk.
         
         Args:
             path: Path to save to
+            
+        Returns:
+            bool: Success flag
         """
-        # Convert sets to lists for JSON serialization
-        serializable = {
-            "name": self.name,
-            "field_path": self.field_path,
-            "type": self.index_type.value,
-            "last_updated": self.last_updated,
-            "index": {k: list(v) for k, v in self.index.items()}
-        }
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, indent=2)
-        
-        self.is_dirty = False
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field_path': self.field_path,
+                    'index_type': self.index_type.value,
+                    'index': self.index,
+                    'sorted_keys': self.sorted_keys
+                }, f)
+            return True
+        except Exception as e:
+            print(f"Error saving index {self.name}: {e}")
+            return False
     
-    def load(self, path: Path) -> bool:
+    def load(self, path: str) -> bool:
         """
         Load the index from disk.
         
@@ -255,113 +440,54 @@ class HashIndex(Index):
             bool: Success flag
         """
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            self.name = data["name"]
-            self.field_path = data["field_path"]
-            self.last_updated = data["last_updated"]
-            
-            # Convert lists back to sets
-            self.index = {k: set(v) for k, v in data["index"].items()}
-            
-            self.is_dirty = False
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                self.name = data['name']
+                self.field_path = data['field_path']
+                self.index_type = IndexType(data['index_type'])
+                self.index = data['index']
+                self.sorted_keys = data['sorted_keys']
             return True
-        
         except Exception as e:
-            print(f"Error loading index: {e}")
+            print(f"Error loading index {self.name}: {e}")
             return False
 
 
-class BTreeIndex(Index):
-    """B-tree index for range queries."""
+class FullTextIndex(BaseIndex):
+    """
+    Full-text index for text search.
+    Maps terms to sets of node keys.
+    """
     
     def __init__(self, name: str, field_path: str):
         """
-        Initialize a B-tree index.
+        Initialize the full-text index.
         
         Args:
             name: Index name
             field_path: Path to the field to index
         """
-        super().__init__(name, field_path, IndexType.BTREE)
-        self.values = []  # Sorted list of values
-        self.key_map = {}  # value -> set of node keys
+        super().__init__(name, field_path)
+        self.index_type = IndexType.FULLTEXT
+        self.index = {}  # {term: {node_key: frequency}}
+        self.document_lengths = {}  # {node_key: document_length}
     
-    def build(self, graph: Dict[str, Dict[str, Any]]):
+    def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
         """
         Build the index from the graph.
         
         Args:
-            graph: Graph to index
+            graph: Graph dictionary
         """
-        self.key_map = {}
+        self.index = {}
+        self.document_lengths = {}
         
         for key, node in graph.items():
-            value = self.get_field_value(node)
-            
-            if value is not None and isinstance(value, (int, float)):
-                if value not in self.key_map:
-                    self.key_map[value] = set()
-                
-                self.key_map[value].add(key)
-        
-        # Sort values for binary search
-        self.values = sorted(self.key_map.keys())
-        
-        self.last_updated = time.time()
-        self.is_dirty = False
+            self.update(key, node)
     
-    def search(
-        self, 
-        min_value: Optional[Union[int, float]] = None,
-        max_value: Optional[Union[int, float]] = None,
-        include_min: bool = True,
-        include_max: bool = True
-    ) -> List[str]:
+    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
         """
-        Search the index for values in a range.
-        
-        Args:
-            min_value: Minimum value (inclusive if include_min is True)
-            max_value: Maximum value (inclusive if include_max is True)
-            include_min: Whether to include the minimum value
-            include_max: Whether to include the maximum value
-            
-        Returns:
-            List[str]: List of matching node keys
-        """
-        if not self.values:
-            return []
-        
-        # Find range of matching values
-        matching_values = []
-        
-        for value in self.values:
-            if min_value is not None:
-                if include_min and value < min_value:
-                    continue
-                elif not include_min and value <= min_value:
-                    continue
-            
-            if max_value is not None:
-                if include_max and value > max_value:
-                    continue
-                elif not include_max and value >= max_value:
-                    continue
-            
-            matching_values.append(value)
-        
-        # Collect matching keys
-        result = set()
-        for value in matching_values:
-            result.update(self.key_map[value])
-        
-        return list(result)
-    
-    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False):
-        """
-        Update the index for a single node.
+        Update the index with a new or modified node.
         
         Args:
             key: Node key
@@ -369,216 +495,188 @@ class BTreeIndex(Index):
             is_delete: Whether this is a deletion
         """
         if is_delete:
-            # Remove from all value sets
-            for value_set in self.key_map.values():
-                if key in value_set:
-                    value_set.remove(key)
+            # Remove from all index entries
+            for term_dict in self.index.values():
+                if key in term_dict:
+                    del term_dict[key]
             
-            # Clean up empty sets
-            self.key_map = {k: v for k, v in self.key_map.items() if v}
+            # Remove from document lengths
+            if key in self.document_lengths:
+                del self.document_lengths[key]
             
-            # Update sorted values
-            self.values = sorted(self.key_map.keys())
-        else:
-            value = self.get_field_value(node)
+            return
+        
+        # Get field value
+        value = self.get_field_value(node)
+        
+        if value is None:
+            return
+        
+        # Convert to string
+        if not isinstance(value, str):
+            value = str(value)
+        
+        # Tokenize and count terms
+        terms = self._tokenize(value)
+        term_counts = {}
+        
+        for term in terms:
+            term_counts[term] = term_counts.get(term, 0) + 1
+        
+        # Update index
+        for term, count in term_counts.items():
+            if term not in self.index:
+                self.index[term] = {}
             
-            if value is not None and isinstance(value, (int, float)):
-                if value not in self.key_map:
-                    self.key_map[value] = set()
-                
-                self.key_map[value].add(key)
-                
-                # Update sorted values if needed
-                if value not in self.values:
-                    self.values.append(value)
-                    self.values.sort()
+            self.index[term][key] = count
         
-        self.is_dirty = True
-    
-    def save(self, path: Path):
-        """
-        Save the index to disk.
-        
-        Args:
-            path: Path to save to
-        """
-        # Convert sets to lists for JSON serialization
-        serializable = {
-            "name": self.name,
-            "field_path": self.field_path,
-            "type": self.index_type.value,
-            "last_updated": self.last_updated,
-            "values": self.values,
-            "key_map": {str(k): list(v) for k, v in self.key_map.items()}
-        }
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, indent=2)
-        
-        self.is_dirty = False
-    
-    def load(self, path: Path) -> bool:
-        """
-        Load the index from disk.
-        
-        Args:
-            path: Path to load from
-            
-        Returns:
-            bool: Success flag
-        """
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            self.name = data["name"]
-            self.field_path = data["field_path"]
-            self.last_updated = data["last_updated"]
-            self.values = data["values"]
-            
-            # Convert lists back to sets and string keys to numeric
-            self.key_map = {}
-            for k, v in data["key_map"].items():
-                try:
-                    # Try to convert back to number
-                    if '.' in k:
-                        k = float(k)
-                    else:
-                        k = int(k)
-                except ValueError:
-                    pass
-                
-                self.key_map[k] = set(v)
-            
-            self.is_dirty = False
-            return True
-        
-        except Exception as e:
-            print(f"Error loading index: {e}")
-            return False
-
-
-class FullTextIndex(Index):
-    """Full-text index for text search."""
-    
-    def __init__(self, name: str, field_path: str):
-        """
-        Initialize a full-text index.
-        
-        Args:
-            name: Index name
-            field_path: Path to the field to index
-        """
-        super().__init__(name, field_path, IndexType.FULLTEXT)
-        self.token_map = {}  # token -> set of node keys
-    
-    def build(self, graph: Dict[str, Dict[str, Any]]):
-        """
-        Build the index from the graph.
-        
-        Args:
-            graph: Graph to index
-        """
-        self.token_map = {}
-        
-        for key, node in graph.items():
-            value = self.get_field_value(node)
-            
-            if value is not None and isinstance(value, str):
-                self._index_text(value, key)
-        
-        self.last_updated = time.time()
-        self.is_dirty = False
-    
-    def _index_text(self, text: str, key: str):
-        """
-        Index a text string.
-        
-        Args:
-            text: Text to index
-            key: Node key
-        """
-        # Tokenize and normalize
-        tokens = self._tokenize(text)
-        
-        # Add to token map
-        for token in tokens:
-            if token not in self.token_map:
-                self.token_map[token] = set()
-            
-            self.token_map[token].add(key)
+        # Update document length
+        self.document_lengths[key] = len(terms)
     
     def _tokenize(self, text: str) -> List[str]:
         """
-        Tokenize a text string.
+        Tokenize text into terms.
         
         Args:
             text: Text to tokenize
             
         Returns:
-            List[str]: List of tokens
+            List of terms
         """
-        # Simple tokenization - split on whitespace and punctuation
+        # Simple tokenization: lowercase, split on non-alphanumeric
         import re
-        
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Replace punctuation with spaces
-        text = re.sub(r'[^\w\s]', ' ', text)
-        
-        # Split on whitespace
-        tokens = text.split()
-        
-        # Remove common stop words
-        stop_words = {
-            'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-            'at', 'from', 'by', 'for', 'with', 'about', 'against', 'between',
-            'into', 'through', 'during', 'before', 'after', 'above', 'below',
-            'to', 'of', 'in', 'on', 'is', 'are', 'was', 'were', 'be', 'been',
-            'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did',
-            'doing', 'this', 'that', 'these', 'those', 'it', 'its', 'it\'s'
-        }
-        
-        tokens = [t for t in tokens if t not in stop_words]
-        
-        return tokens
+        return re.findall(r'\w+', text.lower())
     
-    def search(self, query: str) -> List[str]:
+    def search(self, query: str, limit: int = 10, threshold: float = None) -> List[Tuple[str, float]]:
         """
         Search the index for text matches.
         
         Args:
-            query: Text to search for
+            query: Search query
+            limit: Maximum number of results
+            threshold: Minimum score threshold
             
         Returns:
-            List[str]: List of matching node keys
+            List of (key, score) tuples
         """
         # Tokenize query
-        query_tokens = self._tokenize(query)
+        query_terms = self._tokenize(query)
         
-        if not query_tokens:
+        if not query_terms:
             return []
         
-        # Find matches for each token
-        matches = []
-        for token in query_tokens:
-            if token in self.token_map:
-                matches.append(self.token_map[token])
+        # Calculate TF-IDF scores
+        scores = {}
         
-        if not matches:
-            return []
+        for term in query_terms:
+            if term not in self.index:
+                continue
+            
+            # Calculate IDF (inverse document frequency)
+            idf = np.log(len(self.document_lengths) / len(self.index[term]))
+            
+            for key, tf in self.index[term].items():
+                # Calculate TF (term frequency)
+                tf = tf / self.document_lengths[key]
+                
+                # Calculate TF-IDF
+                tfidf = tf * idf
+                
+                # Update score
+                scores[key] = scores.get(key, 0) + tfidf
         
-        # Intersect results (AND semantics)
-        result = matches[0]
-        for match_set in matches[1:]:
-            result = result.intersection(match_set)
+        # Sort by score
+        results = [(key, score) for key, score in scores.items()]
+        results.sort(key=lambda x: x[1], reverse=True)
         
-        return list(result)
+        # Apply threshold
+        if threshold is not None:
+            results = [(key, score) for key, score in results if score >= threshold]
+        
+        # Limit results
+        return results[:limit]
     
-    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False):
+    def save(self, path: str) -> bool:
         """
-        Update the index for a single node.
+        Save the index to disk.
+        
+        Args:
+            path: Path to save to
+            
+        Returns:
+            bool: Success flag
+        """
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field_path': self.field_path,
+                    'index_type': self.index_type.value,
+                    'index': self.index,
+                    'document_lengths': self.document_lengths
+                }, f)
+            return True
+        except Exception as e:
+            print(f"Error saving index {self.name}: {e}")
+            return False
+    
+    def load(self, path: str) -> bool:
+        """
+        Load the index from disk.
+        
+        Args:
+            path: Path to load from
+            
+        Returns:
+            bool: Success flag
+        """
+        try:
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                self.name = data['name']
+                self.field_path = data['field_path']
+                self.index_type = IndexType(data['index_type'])
+                self.index = data['index']
+                self.document_lengths = data['document_lengths']
+            return True
+        except Exception as e:
+            print(f"Error loading index {self.name}: {e}")
+            return False
+
+
+class VectorIndex(BaseIndex):
+    """
+    Vector index for embedding similarity.
+    Maps node keys to embedding vectors.
+    """
+    
+    def __init__(self, name: str, field_path: str):
+        """
+        Initialize the vector index.
+        
+        Args:
+            name: Index name
+            field_path: Path to the field to index
+        """
+        super().__init__(name, field_path)
+        self.index_type = IndexType.VECTOR
+        self.vectors = {}  # {node_key: embedding_vector}
+    
+    def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Build the index from the graph.
+        
+        Args:
+            graph: Graph dictionary
+        """
+        self.vectors = {}
+        
+        for key, node in graph.items():
+            self.update(key, node)
+    
+    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
+        """
+        Update the index with a new or modified node.
         
         Args:
             key: Node key
@@ -586,204 +684,107 @@ class FullTextIndex(Index):
             is_delete: Whether this is a deletion
         """
         if is_delete:
-            # Remove from all token sets
-            for token_set in self.token_map.values():
-                if key in token_set:
-                    token_set.remove(key)
-            
-            # Clean up empty sets
-            self.token_map = {k: v for k, v in self.token_map.items() if v}
-        else:
-            value = self.get_field_value(node)
-            
-            if value is not None and isinstance(value, str):
-                self._index_text(value, key)
+            # Remove from vectors
+            if key in self.vectors:
+                del self.vectors[key]
+            return
         
-        self.is_dirty = True
+        # Get field value
+        value = self.get_field_value(node)
+        
+        if value is None:
+            return
+        
+        # Store vector
+        self.vectors[key] = np.array(value)
     
-    def save(self, path: Path):
-        """
-        Save the index to disk.
-        
-        Args:
-            path: Path to save to
-        """
-        # Convert sets to lists for JSON serialization
-        serializable = {
-            "name": self.name,
-            "field_path": self.field_path,
-            "type": self.index_type.value,
-            "last_updated": self.last_updated,
-            "token_map": {k: list(v) for k, v in self.token_map.items()}
-        }
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, indent=2)
-        
-        self.is_dirty = False
-    
-    def load(self, path: Path) -> bool:
-        """
-        Load the index from disk.
-        
-        Args:
-            path: Path to load from
-            
-        Returns:
-            bool: Success flag
-        """
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            self.name = data["name"]
-            self.field_path = data["field_path"]
-            self.last_updated = data["last_updated"]
-            
-            # Convert lists back to sets
-            self.token_map = {k: set(v) for k, v in data["token_map"].items()}
-            
-            self.is_dirty = False
-            return True
-        
-        except Exception as e:
-            print(f"Error loading index: {e}")
-            return False
-
-
-class VectorIndex(Index):
-    """Vector index for embedding similarity search."""
-    
-    def __init__(self, name: str, field_path: str):
-        """
-        Initialize a vector index.
-        
-        Args:
-            name: Index name
-            field_path: Path to the field to index
-        """
-        super().__init__(name, field_path, IndexType.VECTOR)
-        self.keys = []  # List of node keys
-        self.vectors = []  # List of embedding vectors
-        self.tree = None  # BallTree for efficient similarity search
-    
-    def build(self, graph: Dict[str, Dict[str, Any]]):
-        """
-        Build the index from the graph.
-        
-        Args:
-            graph: Graph to index
-        """
-        self.keys = []
-        self.vectors = []
-        
-        for key, node in graph.items():
-            value = self.get_field_value(node)
-            
-            if value is not None and isinstance(value, list):
-                try:
-                    # Convert to numpy array
-                    vector = np.array(value, dtype=np.float32)
-                    
-                    self.keys.append(key)
-                    self.vectors.append(vector)
-                except (ValueError, TypeError):
-                    # Skip invalid vectors
-                    pass
-        
-        if self.vectors:
-            # Build BallTree for efficient similarity search
-            self.tree = BallTree(np.array(self.vectors), leaf_size=40)
-        else:
-            self.tree = None
-        
-        self.last_updated = time.time()
-        self.is_dirty = False
-    
-    def search(
-        self, 
-        query_vector: List[float], 
-        k: int = 10, 
-        threshold: Optional[float] = None
-    ) -> List[Tuple[str, float]]:
+    def search(self, query: List[float], limit: int = 10, threshold: float = 0.7) -> List[Tuple[str, float]]:
         """
         Search the index for similar vectors.
         
         Args:
-            query_vector: Query vector
-            k: Number of results to return
-            threshold: Optional similarity threshold (0-1)
+            query: Query vector
+            limit: Maximum number of results
+            threshold: Minimum similarity threshold
             
         Returns:
-            List[Tuple[str, float]]: List of (node_key, similarity) tuples
+            List of (key, similarity) tuples
         """
-        if not self.tree or not self.keys:
+        if not self.vectors:
             return []
         
-        try:
-            # Convert to numpy array
-            query = np.array([query_vector], dtype=np.float32)
-            
-            # Find k nearest neighbors
-            distances, indices = self.tree.query(query, k=min(k, len(self.keys)))
-            
-            # Convert distances to similarities (cosine distance is 1 - cosine similarity)
-            similarities = 1 - distances[0]
-            
-            # Apply threshold if provided
-            results = []
-            for i, similarity in enumerate(similarities):
-                if threshold is None or similarity >= threshold:
-                    results.append((self.keys[indices[0][i]], float(similarity)))
-            
-            return results
+        # Convert query to numpy array
+        query_vector = np.array(query)
         
-        except Exception as e:
-            print(f"Error searching vector index: {e}")
-            return []
+        # Calculate similarities
+        similarities = []
+        
+        for key, vector in self.vectors.items():
+            # Calculate cosine similarity
+            similarity = self._cosine_similarity(query_vector, vector)
+            
+            # Apply threshold
+            if similarity >= threshold:
+                similarities.append((key, similarity))
+        
+        # Sort by similarity
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Limit results
+        return similarities[:limit]
     
-    def update(self, key: str, node: Dict[str, Any], is_delete: bool = False):
+    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """
-        Update the index for a single node.
+        Calculate cosine similarity between two vectors.
         
         Args:
-            key: Node key
-            node: Node data
-            is_delete: Whether this is a deletion
+            a: First vector
+            b: Second vector
+            
+        Returns:
+            float: Cosine similarity
         """
-        # Vector indexes require a full rebuild for updates
-        # This is a limitation of the BallTree data structure
-        self.is_dirty = True
+        # Calculate dot product
+        dot_product = np.dot(a, b)
+        
+        # Calculate magnitudes
+        magnitude_a = np.linalg.norm(a)
+        magnitude_b = np.linalg.norm(b)
+        
+        # Avoid division by zero
+        if magnitude_a == 0 or magnitude_b == 0:
+            return 0.0
+        
+        # Calculate cosine similarity
+        return dot_product / (magnitude_a * magnitude_b)
     
-    def save(self, path: Path):
+    def save(self, path: str) -> bool:
         """
         Save the index to disk.
         
         Args:
             path: Path to save to
+            
+        Returns:
+            bool: Success flag
         """
-        # Create directory if it doesn't exist
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Save metadata
-        metadata = {
-            "name": self.name,
-            "field_path": self.field_path,
-            "type": self.index_type.value,
-            "last_updated": self.last_updated,
-            "keys": self.keys
-        }
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Save vectors to a separate file
-        if self.vectors:
-            np.save(str(path) + ".npy", np.array(self.vectors))
-        
-        self.is_dirty = False
+        try:
+            # Convert vectors to lists for serialization
+            vectors_list = {key: vector.tolist() for key, vector in self.vectors.items()}
+            
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field_path': self.field_path,
+                    'index_type': self.index_type.value,
+                    'vectors': vectors_list
+                }, f)
+            return True
+        except Exception as e:
+            print(f"Error saving index {self.name}: {e}")
+            return False
     
-    def load(self, path: Path) -> bool:
+    def load(self, path: str) -> bool:
         """
         Load the index from disk.
         
@@ -794,64 +795,119 @@ class VectorIndex(Index):
             bool: Success flag
         """
         try:
-            # Load metadata
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            self.name = data["name"]
-            self.field_path = data["field_path"]
-            self.last_updated = data["last_updated"]
-            self.keys = data["keys"]
-            
-            # Load vectors
-            vectors_path = str(path) + ".npy"
-            if os.path.exists(vectors_path):
-                self.vectors = np.load(vectors_path)
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                self.name = data['name']
+                self.field_path = data['field_path']
+                self.index_type = IndexType(data['index_type'])
                 
-                # Rebuild BallTree
-                self.tree = BallTree(self.vectors, leaf_size=40)
-            else:
-                self.vectors = []
-                self.tree = None
-            
-            self.is_dirty = False
+                # Convert lists back to numpy arrays
+                self.vectors = {key: np.array(vector) for key, vector in data['vectors'].items()}
             return True
-        
         except Exception as e:
-            print(f"Error loading index: {e}")
+            print(f"Error loading index {self.name}: {e}")
             return False
 
 
 class IndexManager:
-    """Manages database indexes."""
+    """
+    Manager for creating, updating, and using indexes.
+    """
     
     def __init__(self, graph: Dict[str, Dict[str, Any]], index_dir: str):
         """
         Initialize the index manager.
         
         Args:
-            graph: Graph to index
+            graph: Graph dictionary
             index_dir: Directory to store indexes
         """
         self.graph = graph
-        self.index_dir = Path(index_dir)
-        self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.index_dir = index_dir
+        self.indexes = {}  # {index_name: index_instance}
         
-        # Lock for thread safety
-        self.lock = threading.RLock()
-        
-        # Indexes by name
-        self.indexes = {}
+        # Create index directory if it doesn't exist
+        os.makedirs(index_dir, exist_ok=True)
         
         # Load existing indexes
         self._load_indexes()
     
-    def create_index(
-        self, 
-        name: str, 
-        field_path: str, 
-        index_type: IndexType
-    ) -> Index:
+    def _load_indexes(self) -> None:
+        """Load existing indexes from disk."""
+        # Check if index metadata file exists
+        metadata_path = os.path.join(self.index_dir, 'index_metadata.json')
+        
+        if not os.path.exists(metadata_path):
+            return
+        
+        try:
+            # Load metadata
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            # Load each index
+            for index_info in metadata:
+                name = index_info['name']
+                field_path = index_info['field_path']
+                index_type = IndexType(index_info['type'])
+                
+                # Create index instance
+                index = self._create_index_instance(name, field_path, index_type)
+                
+                # Load index data
+                index_path = os.path.join(self.index_dir, f"{name}.idx")
+                
+                if os.path.exists(index_path):
+                    index.load(index_path)
+                    self.indexes[name] = index
+        
+        except Exception as e:
+            print(f"Error loading indexes: {e}")
+    
+    def _save_metadata(self) -> None:
+        """Save index metadata to disk."""
+        metadata = []
+        
+        for name, index in self.indexes.items():
+            metadata.append({
+                'name': name,
+                'field_path': index.field_path,
+                'type': index.index_type.value
+            })
+        
+        # Save metadata
+        metadata_path = os.path.join(self.index_dir, 'index_metadata.json')
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f)
+    
+    def _create_index_instance(self, name: str, field_path: str, index_type: IndexType) -> BaseIndex:
+        """
+        Create an index instance of the specified type.
+        
+        Args:
+            name: Index name
+            field_path: Path to the field to index
+            index_type: Type of index
+            
+        Returns:
+            BaseIndex: Index instance
+            
+        Raises:
+            ValueError: If the index type is not supported
+        """
+        if index_type == IndexType.HASH:
+            return HashIndex(name, field_path)
+        elif index_type == IndexType.BTREE:
+            return BTreeIndex(name, field_path)
+        elif index_type == IndexType.FULLTEXT:
+            return FullTextIndex(name, field_path)
+        elif index_type == IndexType.VECTOR:
+            return VectorIndex(name, field_path)
+        else:
+            raise ValueError(f"Unsupported index type: {index_type}")
+    
+    def create_index(self, name: str, field_path: str, index_type: IndexType) -> None:
         """
         Create a new index.
         
@@ -860,49 +916,27 @@ class IndexManager:
             field_path: Path to the field to index
             index_type: Type of index
             
-        Returns:
-            Index: New index object
+        Raises:
+            ValueError: If an index with the same name already exists
         """
-        with self.lock:
-            if name in self.indexes:
-                raise ValueError(f"Index {name} already exists")
-            
-            # Create index of the appropriate type
-            if index_type == IndexType.HASH:
-                index = HashIndex(name, field_path)
-            elif index_type == IndexType.BTREE:
-                index = BTreeIndex(name, field_path)
-            elif index_type == IndexType.FULLTEXT:
-                index = FullTextIndex(name, field_path)
-            elif index_type == IndexType.VECTOR:
-                index = VectorIndex(name, field_path)
-            else:
-                raise ValueError(f"Unknown index type: {index_type}")
-            
-            # Build the index
-            index.build(self.graph)
-            
-            # Save the index
-            index_path = self.index_dir / f"{name}.json"
-            index.save(index_path)
-            
-            # Add to indexes
-            self.indexes[name] = index
-            
-            return index
-    
-    def get_index(self, name: str) -> Optional[Index]:
-        """
-        Get an index by name.
+        if name in self.indexes:
+            raise ValueError(f"Index {name} already exists")
         
-        Args:
-            name: Index name
-            
-        Returns:
-            Optional[Index]: Index object or None
-        """
-        with self.lock:
-            return self.indexes.get(name)
+        # Create index instance
+        index = self._create_index_instance(name, field_path, index_type)
+        
+        # Build index
+        index.build(self.graph)
+        
+        # Save index
+        index_path = os.path.join(self.index_dir, f"{name}.idx")
+        index.save(index_path)
+        
+        # Add to indexes
+        self.indexes[name] = index
+        
+        # Save metadata
+        self._save_metadata()
     
     def drop_index(self, name: str) -> bool:
         """
@@ -914,91 +948,34 @@ class IndexManager:
         Returns:
             bool: Success flag
         """
-        with self.lock:
-            if name not in self.indexes:
-                return False
-            
-            # Remove from indexes
-            del self.indexes[name]
-            
-            # Remove from disk
-            index_path = self.index_dir / f"{name}.json"
-            if index_path.exists():
-                index_path.unlink()
-            
-            # Remove vector data if it exists
-            vector_path = self.index_dir / f"{name}.json.npy"
-            if vector_path.exists():
-                vector_path.unlink()
-            
-            return True
+        if name not in self.indexes:
+            return False
+        
+        # Remove index file
+        index_path = os.path.join(self.index_dir, f"{name}.idx")
+        
+        if os.path.exists(index_path):
+            os.remove(index_path)
+        
+        # Remove from indexes
+        del self.indexes[name]
+        
+        # Save metadata
+        self._save_metadata()
+        
+        return True
     
-    def update_indexes(self, key: str, node: Dict[str, Any], is_delete: bool = False):
+    def get_index(self, name: str) -> Optional[BaseIndex]:
         """
-        Update all indexes for a node.
+        Get an index by name.
         
         Args:
-            key: Node key
-            node: Node data
-            is_delete: Whether this is a deletion
+            name: Index name
+            
+        Returns:
+            Optional[BaseIndex]: Index instance or None if not found
         """
-        with self.lock:
-            for index in self.indexes.values():
-                index.update(key, node, is_delete)
-    
-    def rebuild_indexes(self):
-        """Rebuild all indexes."""
-        with self.lock:
-            for name, index in self.indexes.items():
-                index.build(self.graph)
-                
-                # Save the index
-                index_path = self.index_dir / f"{name}.json"
-                index.save(index_path)
-    
-    def save_indexes(self):
-        """Save all dirty indexes to disk."""
-        with self.lock:
-            for name, index in self.indexes.items():
-                if index.is_dirty:
-                    index_path = self.index_dir / f"{name}.json"
-                    index.save(index_path)
-    
-    def _load_indexes(self):
-        """Load indexes from disk."""
-        with self.lock:
-            for index_path in self.index_dir.glob("*.json"):
-                # Skip vector data files
-                if index_path.name.endswith(".json.npy"):
-                    continue
-                
-                try:
-                    # Load index metadata
-                    with open(index_path, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    
-                    name = metadata["name"]
-                    field_path = metadata["field_path"]
-                    index_type = IndexType(metadata["type"])
-                    
-                    # Create index of the appropriate type
-                    if index_type == IndexType.HASH:
-                        index = HashIndex(name, field_path)
-                    elif index_type == IndexType.BTREE:
-                        index = BTreeIndex(name, field_path)
-                    elif index_type == IndexType.FULLTEXT:
-                        index = FullTextIndex(name, field_path)
-                    elif index_type == IndexType.VECTOR:
-                        index = VectorIndex(name, field_path)
-                    else:
-                        continue
-                    
-                    # Load the index
-                    if index.load(index_path):
-                        self.indexes[name] = index
-                
-                except Exception as e:
-                    print(f"Error loading index {index_path.name}: {e}")
+        return self.indexes.get(name)
     
     def get_indexes(self) -> List[Dict[str, Any]]:
         """
@@ -1007,14 +984,59 @@ class IndexManager:
         Returns:
             List[Dict[str, Any]]: List of index information
         """
-        with self.lock:
-            return [
-                {
-                    "name": index.name,
-                    "field_path": index.field_path,
-                    "type": index.index_type.value,
-                    "last_updated": index.last_updated
-                }
-                for index in self.indexes.values()
-            ]
+        return [
+            {
+                'name': name,
+                'field_path': index.field_path,
+                'type': index.index_type.value
+            }
+            for name, index in self.indexes.items()
+        ]
+    
+    def update_indexes(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
+        """
+        Update all indexes with a new or modified node.
+        
+        Args:
+            key: Node key
+            node: Node data
+            is_delete: Whether this is a deletion
+        """
+        for index in self.indexes.values():
+            index.update(key, node, is_delete)
+            
+            # Save index
+            index_path = os.path.join(self.index_dir, f"{index.name}.idx")
+            index.save(index_path)
+    
+    def rebuild_indexes(self) -> None:
+        """Rebuild all indexes from the graph."""
+        for index in self.indexes.values():
+            # Rebuild index
+            index.build(self.graph)
+            
+            # Save index
+            index_path = os.path.join(self.index_dir, f"{index.name}.idx")
+            index.save(index_path)
+    
+    def search(self, index_name: str, query: Any, limit: int = 10, threshold: float = None) -> List[Union[str, Tuple[str, float]]]:
+        """
+        Search an index.
+        
+        Args:
+            index_name: Index name
+            query: Search query
+            limit: Maximum number of results
+            threshold: Optional threshold for similarity-based searches
+            
+        Returns:
+            List of matching keys or (key, score) tuples
+            
+        Raises:
+            ValueError: If the index is not found
+        """
+        if index_name not in self.indexes:
+            raise ValueError(f"Index {index_name} not found")
+        
+        return self.indexes[index_name].search(query, limit, threshold)
 
