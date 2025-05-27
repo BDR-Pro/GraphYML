@@ -1,177 +1,102 @@
-# Embedding Models in GraphYML
+# Embedding LLMs in GraphYML
 
-This document provides an overview of embedding models and their implementation in GraphYML.
+This document provides information about embedding LLMs (Language Learning Models) in the GraphYML project.
 
-## What are Embeddings?
+## Overview
 
-Embeddings are dense vector representations of data (text, images, etc.) that capture semantic meaning in a way that machines can understand. In the context of GraphYML, embeddings are primarily used for:
+Embeddings are vector representations of text that capture semantic meaning. In GraphYML, we use embeddings to:
 
-1. Representing nodes in a high-dimensional space
-2. Finding similar nodes through vector similarity
-3. Enabling semantic search capabilities
+1. Enable semantic search of nodes
+2. Find similar nodes based on content
+3. Support clustering and visualization of related nodes
 
-## Embedding Models
+## Supported Embedding Models
 
-### Types of Embedding Models
+GraphYML currently supports the following embedding sources:
 
-1. **Word Embeddings**
-   - Word2Vec
-   - GloVe
-   - FastText
+### 1. Ollama
 
-2. **Sentence/Document Embeddings**
-   - Universal Sentence Encoder
-   - SBERT (Sentence-BERT)
-   - SimCSE
+[Ollama](https://ollama.ai/) provides a simple way to run LLMs locally. It's the primary embedding source for GraphYML.
 
-3. **Graph Embeddings**
-   - Node2Vec
-   - DeepWalk
-   - GraphSAGE
-
-### Current Implementation
-
-In GraphYML, we use a simple embedding similarity function:
-
+**Configuration:**
 ```python
-def embedding_similarity(embedding1: List[float], embedding2: List[float]) -> float:
-    """
-    Calculate cosine similarity between two embeddings.
-    
-    Args:
-        embedding1: First embedding
-        embedding2: Second embedding
-        
-    Returns:
-        float: Similarity score (0-1)
-    """
-    # Check if embeddings are valid
-    if not embedding1 or not embedding2:
-        return 0.0
-    
-    # Check if embeddings have the same dimension
-    if len(embedding1) != len(embedding2):
-        return 0.0
-    
-    # Calculate dot product
-    dot_product = sum(a * b for a, b in zip(embedding1, embedding2))
-    
-    # Calculate magnitudes
-    magnitude1 = math.sqrt(sum(a * a for a in embedding1))
-    magnitude2 = math.sqrt(sum(b * b for b in embedding2))
-    
-    # Calculate cosine similarity
-    if magnitude1 * magnitude2 == 0:
-        return 0.0
-    
-    return dot_product / (magnitude1 * magnitude2)
+config = {
+    "ollama_url": "http://localhost:11434/api/embeddings",
+    "ollama_model": "llama2",
+    "embedding_dimension": 384,
+    "allow_fallback": True
+}
 ```
 
-## Integration with LLMs
+**Usage:**
+```python
+from src.models.embeddings import EmbeddingGenerator
 
-### Potential LLM Embedding Models
+# Create embedding generator
+generator = EmbeddingGenerator(config)
 
-1. **OpenAI Embeddings**
-   - text-embedding-ada-002
-   - text-embedding-3-small
-   - text-embedding-3-large
+# Generate embedding
+embedding, error = generator.generate_embedding("Your text here")
+```
 
-2. **Open Source Alternatives**
-   - BERT-based models (e.g., all-MiniLM-L6-v2)
-   - MPNet-based models
-   - E5 models
+### 2. Fallback Embedding
 
-### Implementation Considerations
+When Ollama is unavailable or fails, GraphYML can generate simple fallback embeddings. These are less semantically meaningful but allow the system to continue functioning.
 
-To integrate LLM embeddings into GraphYML:
+## Integration Points
 
-1. **API Integration**
-   ```python
-   def get_embedding_from_llm(text: str, model: str = "text-embedding-3-small") -> List[float]:
-       """
-       Get embedding from LLM API.
-       
-       Args:
-           text: Text to embed
-           model: Model to use
-           
-       Returns:
-           List[float]: Embedding vector
-       """
-       # Implementation depends on the API provider
-       # Example for OpenAI:
-       response = openai.Embedding.create(
-           input=text,
-           model=model
-       )
-       return response['data'][0]['embedding']
-   ```
+The embedding system integrates with GraphYML in several key places:
 
-2. **Batch Processing**
-   ```python
-   def batch_embed_nodes(graph: Dict[str, Dict[str, Any]], field: str, batch_size: int = 100) -> Dict[str, Dict[str, Any]]:
-       """
-       Batch embed nodes in a graph.
-       
-       Args:
-           graph: Graph to embed
-           field: Field to embed
-           batch_size: Batch size
-           
-       Returns:
-           Dict[str, Dict[str, Any]]: Graph with embeddings
-       """
-       # Implementation for batch processing
-       # ...
-   ```
+1. **VectorIndex**: Uses embeddings to find semantically similar nodes
+2. **graph_ops.find_similar_nodes()**: Finds nodes with similar embeddings
+3. **batch_generate_embeddings()**: Processes multiple nodes to add embeddings
 
-3. **Caching Strategy**
-   ```python
-   def cache_embeddings(embeddings: Dict[str, List[float]], cache_path: str) -> bool:
-       """
-       Cache embeddings to disk.
-       
-       Args:
-           embeddings: Embeddings to cache
-           cache_path: Path to cache file
-           
-       Returns:
-           bool: True if successful, False otherwise
-       """
-       # Implementation for caching
-       # ...
-   ```
+## Adding New Embedding Sources
 
-## Vector Search Optimization
+To add a new embedding source:
 
-For large-scale vector search, consider:
+1. Add a new method to `EmbeddingGenerator` class (e.g., `_generate_openai_embedding`)
+2. Update the `generate_embedding` method to try the new source
+3. Add appropriate configuration options
 
-1. **Approximate Nearest Neighbors (ANN)**
-   - HNSW (Hierarchical Navigable Small World)
-   - FAISS (Facebook AI Similarity Search)
-   - Annoy (Spotify's ANN library)
+Example for adding OpenAI embeddings:
 
-2. **Vector Database Integration**
-   - Pinecone
-   - Weaviate
-   - Milvus
-   - Qdrant
+```python
+def _generate_openai_embedding(self, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
+    """Generate an embedding using OpenAI API."""
+    try:
+        # Make API request to OpenAI
+        response = openai.Embedding.create(
+            input=text,
+            model=self.config["openai_model"]
+        )
+        
+        # Return embedding
+        return response["data"][0]["embedding"], None
+    except Exception as e:
+        error = f"OpenAI API error: {str(e)}"
+        logger.error(error)
+        return None, error
+```
+
+## Best Practices
+
+1. **Caching**: Consider caching embeddings to avoid regenerating them for the same text
+2. **Normalization**: Always normalize embeddings to unit length for consistent similarity calculations
+3. **Error Handling**: Provide fallback options when embedding generation fails
+4. **Dimensionality**: Be consistent with embedding dimensions across the application
+
+## Performance Considerations
+
+1. Generating embeddings can be computationally expensive
+2. Batch processing is more efficient than individual requests
+3. Consider using a dedicated service for high-volume embedding generation
+4. For large graphs, implement pagination or streaming for embedding operations
 
 ## Future Improvements
 
-1. **Hybrid Search**
-   - Combine keyword and semantic search
-   - Weighted combination of different similarity metrics
-
-2. **Fine-tuning**
-   - Domain-specific embedding models
-   - Task-specific fine-tuning
-
-3. **Multi-modal Embeddings**
-   - Text + image embeddings
-   - Cross-modal retrieval
-
-## Conclusion
-
-Embedding models are a powerful tool for semantic understanding in GraphYML. By integrating with modern LLMs, we can enhance the system's ability to find relevant connections and provide more accurate search results.
+1. Support for more embedding models (OpenAI, Hugging Face, etc.)
+2. Embedding caching and persistence
+3. Hybrid search combining embeddings with other index types
+4. Customizable embedding generation parameters
 
