@@ -1,239 +1,241 @@
 """
-Data handling utilities for GraphYML.
-Handles loading, saving, and processing YAML files.
+Data handler module for GraphYML.
+Provides functions for loading and saving graph data.
 """
 import os
+import yaml
+import json
 import zipfile
 import tempfile
+from typing import Dict, List, Any, Optional, Tuple, Set, Union, BinaryIO
 from io import BytesIO
-from pathlib import Path
-
-import yaml
-import cerberus
-
-# Schema definition for YAML validation
-NODE_SCHEMA = {
-    "id": {"type": "string", "required": True},
-    "title": {"type": "string", "required": True},
-    "tags": {"type": "list", "schema": {"type": "string"}},
-    "genres": {"type": "list", "schema": {"type": "string"}},
-    "links": {"type": "list", "schema": {"type": "string"}},
-    "embedding": {"type": "list"},
-    # Additional fields that are optional
-    "tagline": {"type": "string"},
-    "director": {"type": "string"},
-    "cast": {"type": "list", "schema": {"type": "string"}},
-    "keywords": {"type": "list", "schema": {"type": "string"}},
-    "overview": {"type": "string"},
-    "runtime": {"type": "number"},
-    "release_date": {"type": "string"},
-    "vote_count": {"type": "integer"},
-    "vote_average": {"type": "number"},
-    "budget": {"type": "number"},
-    "revenue": {"type": "number"},
-    "budget_adj": {"type": "number"},
-    "revenue_adj": {"type": "number"},
-    "popularity": {"type": "number"},
-    "production_companies": {"type": "list", "schema": {"type": "string"}},
-    "year": {"type": "integer"},
-    "script": {"type": "string"}
-}
 
 
-def validate_node_schema(node):
+def validate_node_schema(node: Dict[str, Any]) -> Tuple[bool, Dict[str, str]]:
     """
-    Validate a YAML node against the expected schema.
+    Validate a node against a schema.
     
     Args:
-        node (dict): Node data to validate
+        node: Node to validate
         
     Returns:
-        tuple: (is_valid, errors)
+        Tuple[bool, Dict[str, str]]: (is_valid, error_messages)
     """
-    validator = cerberus.Validator(NODE_SCHEMA)
-    is_valid = validator.validate(node)
-    return is_valid, validator.errors
+    errors = {}
+    
+    # Define schema
+    schema = {
+        "id": {"required": True, "type": "string"},
+        "title": {"required": True, "type": "string"},
+        "tags": {"required": False, "type": "array", "items": {"type": "string"}},
+        "links": {"required": False, "type": "array", "items": {"type": "string"}},
+        "genres": {"required": False, "type": "array", "items": {"type": "string"}},
+        "embedding": {"required": False, "type": "array", "items": {"type": "number"}},
+        "content": {"required": False, "type": "string"},
+        "description": {"required": False, "type": "string"},
+        "overview": {"required": False, "type": "string"},
+        "metadata": {"required": False, "type": "object"}
+    }
+    
+    # Check required fields
+    for field, field_schema in schema.items():
+        if field_schema.get("required", False) and field not in node:
+            errors[field] = f"Missing required field: {field}"
+        
+        if field in node:
+            # Check field type
+            field_type = field_schema.get("type")
+            
+            if field_type == "string" and not isinstance(node[field], str):
+                errors[field] = f"Field {field} must be a string"
+            elif field_type == "number" and not isinstance(node[field], (int, float)):
+                errors[field] = f"Field {field} must be a number"
+            elif field_type == "boolean" and not isinstance(node[field], bool):
+                errors[field] = f"Field {field} must be a boolean"
+            elif field_type == "array" and not isinstance(node[field], list):
+                errors[field] = f"Field {field} must be an array"
+            elif field_type == "object" and not isinstance(node[field], dict):
+                errors[field] = f"Field {field} must be an object"
+            
+            # Check array items
+            if field_type == "array" and "items" in field_schema and node[field]:
+                item_type = field_schema["items"].get("type")
+                
+                for i, item in enumerate(node[field]):
+                    if item_type == "string" and not isinstance(item, str):
+                        errors[f"{field}[{i}]"] = f"Items in {field} must be strings"
+                    elif item_type == "number" and not isinstance(item, (int, float)):
+                        errors[f"{field}[{i}]"] = f"Items in {field} must be numbers"
+                    elif item_type == "boolean" and not isinstance(item, bool):
+                        errors[f"{field}[{i}]"] = f"Items in {field} must be booleans"
+                    elif item_type == "object" and not isinstance(item, dict):
+                        errors[f"{field}[{i}]"] = f"Items in {field} must be objects"
+    
+    return len(errors) == 0, errors
 
 
-def create_zip(folder):
+def load_graph_from_folder(folder_path: str) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
     """
-    Compress all YAML files in a folder into a zip archive.
+    Load graph data from a folder of YAML files.
     
     Args:
-        folder (str): Path to the folder containing YAML files
+        folder_path: Path to folder containing YAML files
         
     Returns:
-        BytesIO: In-memory zip file buffer
-    """
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        for file in Path(folder).glob("*.yaml"):
-            zipf.write(file, arcname=file.name)
-    zip_buffer.seek(0)
-    return zip_buffer
-
-
-def handle_zip_upload(uploaded_zip, save_dir):
-    """
-    Extract a ZIP file into the configured save directory.
-    
-    Args:
-        uploaded_zip: Streamlit uploaded file object
-        save_dir (str): Directory to save extracted files
-        
-    Returns:
-        list: List of folders created
-    """
-    folders = set()
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = Path(tmpdir) / "uploaded.zip"
-        with open(zip_path, "wb") as f:
-            f.write(uploaded_zip.read())
-
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(tmpdir)
-
-        for file in Path(tmpdir).rglob("*.yaml"):
-            rel_folder = file.relative_to(tmpdir).parent
-            dest_folder = Path(save_dir) / rel_folder
-            dest_folder.mkdir(parents=True, exist_ok=True)
-            dest_path = dest_folder / file.name
-            with open(dest_path, "wb") as f_out:
-                f_out.write(file.read_bytes())
-            folders.add(str(rel_folder))
-    
-    return list(folders)
-
-
-def handle_yaml_uploads(uploaded_files, save_dir):
-    """
-    Save uploaded YAML files, using simulated folder paths from their filenames.
-    
-    Args:
-        uploaded_files: List of Streamlit uploaded file objects
-        save_dir (str): Directory to save files
-        
-    Returns:
-        set: Set of folders created
-    """
-    folders = set()
-    for f in uploaded_files:
-        folder = Path(f.name).parts[0] if "/" in f.name else "root"
-        folders.add(folder)
-        folder_path = Path(save_dir) / folder
-        folder_path.mkdir(parents=True, exist_ok=True)
-        with open(folder_path / Path(f.name).name, "wb") as out:
-            out.write(f.getbuffer())
-    return folders
-
-
-def load_graph_from_folder(folder_path):
-    """
-    Load all YAML files in a given folder into a graph dictionary.
-    
-    Args:
-        folder_path (str): Path to folder containing YAML files
-        
-    Returns:
-        tuple: (graph_dict, error_list)
+        Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]: (graph, errors)
     """
     graph = {}
-    errors = []
+    errors = {}
     
-    for yml in Path(folder_path).glob("*.yaml"):
-        try:
-            with open(yml, encoding='utf-8') as f:
-                node = yaml.safe_load(f)
-                if node:
-                    # Validate node against schema
-                    is_valid, validation_errors = validate_node_schema(node)
-                    if not is_valid:
-                        errors.append((yml.name, validation_errors))
-                        continue
-                        
-                    key = node.get("id") or node.get("title")
-                    if key:
-                        graph[key] = node
-                    else:
-                        errors.append((yml.name, "Missing id or title"))
-        except Exception as e:
-            errors.append((yml.name, str(e)))
+    # Check if folder exists
+    if not os.path.exists(folder_path):
+        return graph, errors
+    
+    # Load each YAML file
+    for filename in os.listdir(folder_path):
+        if filename.endswith(('.yaml', '.yml')):
+            file_path = os.path.join(folder_path, filename)
+            
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    node = yaml.safe_load(f)
+                
+                # Skip invalid nodes
+                if not isinstance(node, dict) or "id" not in node:
+                    errors[filename] = "Invalid node format or missing ID"
+                    continue
+                
+                # Add node to graph
+                graph[node["id"]] = node
+            except Exception as e:
+                errors[filename] = f"Error loading file: {str(e)}"
     
     return graph, errors
 
 
-def save_node_to_yaml(node, folder_path, filename=None):
+def save_node_to_yaml(
+    node: Dict[str, Any],
+    folder_path: str,
+    filename: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
     """
     Save a node to a YAML file.
     
     Args:
-        node (dict): Node data to save
-        folder_path (str): Directory to save the file
-        filename (str, optional): Filename to use. If None, uses node id or title.
+        node: Node to save
+        folder_path: Path to folder to save to
+        filename: Optional filename (defaults to node_id.yaml)
         
     Returns:
-        tuple: (success, error_message)
+        Tuple[bool, Optional[str]]: (success, error_message)
     """
     try:
-        # Validate node
-        is_valid, errors = validate_node_schema(node)
-        if not is_valid:
-            return False, f"Validation failed: {errors}"
+        # Check if node has ID
+        if "id" not in node:
+            return False, "Node must have an ID"
+        
+        # Create folder if it doesn't exist
+        os.makedirs(folder_path, exist_ok=True)
         
         # Determine filename
-        if not filename:
-            key = node.get("id") or node.get("title")
-            if not key:
-                return False, "Node must have id or title"
-            filename = f"{key}.yaml"
+        if filename is None:
+            filename = f"{node['id']}.yaml"
         
-        # Ensure folder exists
-        folder = Path(folder_path)
-        folder.mkdir(parents=True, exist_ok=True)
+        # Save node to file
+        file_path = os.path.join(folder_path, filename)
         
-        # Write file
-        with open(folder / filename, "w", encoding="utf-8") as f:
-            yaml.dump(node, f, sort_keys=False)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            yaml.dump(node, f, default_flow_style=False, sort_keys=False)
         
         return True, None
     except Exception as e:
         return False, str(e)
 
 
-def flatten_node(d):
+def create_zip(folder_path: str) -> BytesIO:
     """
-    Flatten nested dict or list values to a flat list of strings.
+    Create a ZIP file from a folder.
     
     Args:
-        d: Dictionary, list, or scalar value
+        folder_path: Path to folder to zip
         
     Returns:
-        list: Flattened list of string values
+        BytesIO: ZIP file as a BytesIO object
     """
+    # Create a BytesIO object to store the ZIP file
+    zip_buffer = BytesIO()
+    
+    # Create ZIP file
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Add each file in folder
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                
+                # Add file to ZIP with just the filename
+                zipf.write(file_path, os.path.basename(file_path))
+    
+    # Reset buffer position
+    zip_buffer.seek(0)
+    
+    return zip_buffer
+
+
+def flatten_node(node: Dict[str, Any]) -> str:
+    """
+    Flatten a node by combining all values into a single string.
+    
+    Args:
+        node: Node to flatten
+        
+    Returns:
+        str: Flattened node as a string
+    """
+    # Create a list to store all values
     values = []
-    if isinstance(d, dict):
-        for v in d.values():
-            values += flatten_node(v)
-    elif isinstance(d, list):
-        for item in d:
-            values += flatten_node(item)
-    elif isinstance(d, (str, int, float)):
-        values.append(str(d))
-    return values
+    
+    # Helper function to extract values
+    def extract_values(obj):
+        if isinstance(obj, dict):
+            for value in obj.values():
+                extract_values(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                extract_values(item)
+        else:
+            values.append(str(obj))
+    
+    # Extract values
+    extract_values(node)
+    
+    # Join values
+    return " ".join(values)
 
 
-def query_by_tag(graph, tag):
+def query_by_tag(graph: Dict[str, Dict[str, Any]], tag: str) -> Dict[str, Dict[str, Any]]:
     """
-    Return keys where tag is found in any nested field.
+    Query graph by tag.
     
     Args:
-        graph (dict): Graph dictionary
-        tag (str): Tag to search for
+        graph: Graph to query
+        tag: Tag to query for
         
     Returns:
-        list: List of matching node keys
+        Dict[str, Dict[str, Any]]: Matching nodes
     """
-    return [key for key, node in graph.items() if tag.lower() in 
-            [v.lower() for v in flatten_node(node) if isinstance(v, str)]]
-
+    results = {}
+    
+    for key, node in graph.items():
+        # Check if node has tags
+        if "tags" in node and isinstance(node["tags"], list):
+            # Check if tag is in tags
+            if tag in node["tags"]:
+                results[key] = node
+        
+        # Check if node has genres
+        if "genres" in node and isinstance(node["genres"], list):
+            # Check if tag is in genres
+            if tag in node["genres"]:
+                results[key] = node
+    
+    return results
