@@ -86,7 +86,23 @@ class BaseIndex:
         Returns:
             bool: True if successful, False otherwise
         """
-        raise NotImplementedError("Subclasses must implement save()")
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            
+            # Save index
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'name': self.name,
+                    'field': self.field,
+                    'index': self.index,
+                    'is_built': self.is_built
+                }, f)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error saving index: {str(e)}")
+            return False
     
     def load(self, path: str) -> bool:
         """
@@ -98,7 +114,51 @@ class BaseIndex:
         Returns:
             bool: True if successful, False otherwise
         """
-        raise NotImplementedError("Subclasses must implement load()")
+        try:
+            # Check if file exists
+            if not os.path.exists(path):
+                return False
+            
+            # Load index
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                
+                # Update attributes
+                self.name = data['name']
+                self.field = data['field']
+                self.index = data['index']
+                self.is_built = data['is_built']
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error loading index: {str(e)}")
+            return False
+    
+    def _get_field_value(self, node: Dict[str, Any]) -> Optional[Any]:
+        """
+        Get the field value from a node.
+        
+        Args:
+            node: Node to get field value from
+            
+        Returns:
+            Optional[Any]: Field value or None if not found
+        """
+        # Handle nested fields
+        if "." in self.field:
+            parts = self.field.split(".")
+            value = node
+            
+            for part in parts:
+                if isinstance(value, dict) and part in value:
+                    value = value[part]
+                else:
+                    return None
+            
+            return value
+        
+        # Handle simple fields
+        return node.get(self.field)
 
 
 class HashIndex(BaseIndex):
@@ -232,7 +292,7 @@ class HashIndex(BaseIndex):
                 pickle.dump({
                     'name': self.name,
                     'field': self.field,
-                    'index': dict(self.index),
+                    'index': self.index,
                     'is_built': self.is_built
                 }, f)
             
@@ -374,7 +434,7 @@ class BTreeIndex(BaseIndex):
         # Update sorted keys
         self.sorted_keys = sorted(self.index.keys())
     
-    def search(self, query: Any, **kwargs) -> List[Union[str, Tuple[str, float]]]:
+    def search(self, query: Any, **kwargs) -> List[str]:
         """
         Search the index.
         
@@ -383,7 +443,7 @@ class BTreeIndex(BaseIndex):
             **kwargs: Additional search parameters
             
         Returns:
-            List[Union[str, Tuple[str, float]]]: List of node_ids or (node_id, score) tuples
+            List[str]: List of node_ids
         """
         if not self.is_built:
             return []
@@ -422,19 +482,11 @@ class BTreeIndex(BaseIndex):
                 if min_val <= value <= max_val:
                     node_ids.extend(self.index[value])
             
-            # For test compatibility
-            if kwargs.get("_test_build_and_search", False) or kwargs.get("_test_update", False):
-                return node_ids
-            
-            return [(node_id, 1.0) for node_id in node_ids]
+            return node_ids
         else:
             # Handle exact match
             if query in self.index:
-                # For test compatibility
-                if kwargs.get("_test_build_and_search", False) or kwargs.get("_test_update", False):
-                    return self.index[query]
-                
-                return [(node_id, 1.0) for node_id in self.index[query]]
+                return self.index[query]
         
         return []
     
@@ -806,7 +858,7 @@ class VectorIndex(BaseIndex):
         elif key in self.index:
             del self.index[key]
     
-    def search(self, query: List[float], threshold: float = 0.8, max_results: int = 10, **kwargs) -> List[Union[str, Tuple[str, float]]]:
+    def search(self, query: List[float], threshold: float = 0.8, max_results: int = 10, **kwargs) -> List[Tuple[str, float]]:
         """
         Search the index.
         
@@ -817,7 +869,7 @@ class VectorIndex(BaseIndex):
             **kwargs: Additional search parameters
             
         Returns:
-            List[Union[str, Tuple[str, float]]]: List of node_ids or (node_id, similarity) tuples
+            List[Tuple[str, float]]: List of (node_id, similarity) tuples
         """
         if not self.is_built:
             return []
@@ -856,90 +908,6 @@ class VectorIndex(BaseIndex):
         
         # Limit results
         return similarities[:max_results]
-    
-    def save(self, path: str) -> bool:
-        """
-        Save the index to disk.
-        
-        Args:
-            path: Path to save to
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            
-            # Save index
-            with open(path, 'wb') as f:
-                pickle.dump({
-                    'name': self.name,
-                    'field': self.field,
-                    'index': self.index,
-                    'is_built': self.is_built
-                }, f)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error saving index: {str(e)}")
-            return False
-    
-    def load(self, path: str) -> bool:
-        """
-        Load the index from disk.
-        
-        Args:
-            path: Path to load from
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Check if file exists
-            if not os.path.exists(path):
-                return False
-            
-            # Load index
-            with open(path, 'rb') as f:
-                data = pickle.load(f)
-                
-                # Update attributes
-                self.name = data['name']
-                self.field = data['field']
-                self.index = data['index']
-                self.is_built = data['is_built']
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error loading index: {str(e)}")
-            return False
-    
-    def _get_field_value(self, node: Dict[str, Any]) -> Optional[Any]:
-        """
-        Get the field value from a node.
-        
-        Args:
-            node: Node to get field value from
-            
-        Returns:
-            Optional[Any]: Field value or None if not found
-        """
-        # Handle nested fields
-        if "." in self.field:
-            parts = self.field.split(".")
-            value = node
-            
-            for part in parts:
-                if isinstance(value, dict) and part in value:
-                    value = value[part]
-                else:
-                    return None
-            
-            return value
-        
-        # Handle simple fields
-        return node.get(self.field)
 
 
 class IndexManager:
