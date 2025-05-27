@@ -22,6 +22,8 @@ A powerful, interactive Streamlit application to explore, edit, visualize, and q
 - 🔍 **Powerful Querying**
   - Search nodes by tag, genre, director, or custom fields
   - A* pathfinding across similar or connected nodes
+  - Full query language with comparison, logical, and string operators
+  - Optimized search with multiple index types
 
 - 🧪 **YAML Schema Validation**
   - Checks each node against expected structure
@@ -38,6 +40,13 @@ A powerful, interactive Streamlit application to explore, edit, visualize, and q
 - 📦 **Export**
   - Download selected folder as ZIP archive
 
+- 🔐 **Database Features**
+  - ACID transactions for data integrity
+  - Multiple index types (Hash, B-tree, Full-text, Vector)
+  - User authentication and role-based access control
+  - Backup and recovery mechanisms
+  - See [Database Features Guide](docs/DATABASE_FEATURES.md) for details
+
 ---
 
 ## 📁 Project Structure
@@ -49,6 +58,13 @@ project-root/
 │   ├── app.py              # Main Streamlit application
 │   ├── config/             # Configuration management
 │   ├── models/             # Embedding and graph algorithms
+│   │   ├── auth.py         # Authentication and access control
+│   │   ├── database.py     # Main database manager
+│   │   ├── embeddings.py   # Embedding generation
+│   │   ├── graph_ops.py    # Graph operations
+│   │   ├── indexing.py     # Index management
+│   │   ├── query_engine.py # Query language and execution
+│   │   └── transaction.py  # Transaction management
 │   ├── utils/              # Data handling utilities
 │   └── visualization/      # Visualization components
 │
@@ -56,6 +72,7 @@ project-root/
 │   └── hf_embedding_server.py  # Hugging Face embedding server
 │
 ├── docs/                   # Documentation
+│   ├── DATABASE_FEATURES.md    # Database features guide
 │   └── LLM_EMBEDDING_GUIDE.md  # Guide for embedding integration
 │
 ├── cleaned_data/           # Data processing scripts
@@ -92,6 +109,14 @@ streamlit run src/app.py
 docker build -t graphyml .
 docker run -p 8501:8501 graphyml
 ```
+
+### 4. Default Login
+
+When you first run the application, a default admin user is created:
+- Username: `admin`
+- Password: `admin`
+
+**Important:** Change the default password immediately after first login!
 
 ---
 
@@ -176,4 +201,3 @@ python -m src.utils.csv_to_yaml cleaned_data/tmdb-movies.csv output_folder
 ## 📝 License
 
 MIT License — use, fork, and build on it freely.
-
