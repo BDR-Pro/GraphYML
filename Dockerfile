@@ -11,10 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Explicitly install cerberus to ensure it's available
-RUN pip install --no-cache-dir cerberus>=1.3.4
+RUN pip install  -r requirements.txt
 
 # Copy application code
 COPY . .
