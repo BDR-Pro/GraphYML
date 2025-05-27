@@ -63,18 +63,43 @@ class EmbeddingGenerator:
             config: Configuration dictionary
         """
         self.config = config
-        self.embedding_provider = config.get("embedding_provider", "sentence_transformers")
-        self.embedding_model = config.get("embedding_model", "all-MiniLM-L6-v2")
+        
+        # Get embedding provider from environment or config
+        self.embedding_provider = os.environ.get(
+            "EMBEDDING_PROVIDER", 
+            config.get("embedding_provider", "sentence_transformers")
+        )
+        
+        # Get fallback provider
+        self.fallback_provider = os.environ.get(
+            "FALLBACK_EMBEDDING_PROVIDER",
+            config.get("fallback_embedding_provider", "sentence_transformers")
+        )
+        
+        # Get model name
+        self.embedding_model = os.environ.get(
+            "EMBEDDING_MODEL",
+            config.get("embedding_model", "all-MiniLM-L6-v2")
+        )
+        
+        # Get service URL if using service provider
         self.embedding_service_url = os.environ.get(
             "EMBEDDING_SERVICE", 
             config.get("embedding_service_url")
+        )
+        
+        # Get Ollama URL if using Ollama provider
+        self.ollama_url = os.environ.get(
+            "OLLAMA_URL",
+            config.get("ollama_url", "http://localhost:11434/api")
         )
         
         # Initialize embedding model
         self.model = None
         
         # Try to initialize the model if using sentence_transformers
-        if self.embedding_provider == "sentence_transformers" and SENTENCE_TRANSFORMERS_AVAILABLE:
+        if (self.embedding_provider == "sentence_transformers" or 
+            self.fallback_provider == "sentence_transformers") and SENTENCE_TRANSFORMERS_AVAILABLE:
             try:
                 self.model = SentenceTransformer(self.embedding_model)
                 print(f"Initialized sentence_transformers model: {self.embedding_model}")
@@ -95,19 +120,44 @@ class EmbeddingGenerator:
             Tuple[Optional[List[float]], Optional[str]]: 
                 (embedding, error_message)
         """
-        # Check if embedding service URL is available
-        if self.embedding_service_url:
-            return self._generate_embedding_service(text)
+        # Choose provider based on configuration
+        if self.embedding_provider == "service" and self.embedding_service_url:
+            embedding, error = self._generate_embedding_service(text)
+            if embedding is not None:
+                return embedding, error
+            
+            # Fall back to configured fallback provider
+            print(f"Embedding service failed, falling back to {self.fallback_provider}")
+            return self._generate_with_provider(text, self.fallback_provider)
+            
+        else:
+            # Use configured provider directly
+            return self._generate_with_provider(text, self.embedding_provider)
+    
+    def _generate_with_provider(
+        self,
+        text: str,
+        provider: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
+        """
+        Generate embedding using specified provider.
         
-        # Try different providers
-        if self.embedding_provider == "sentence_transformers":
+        Args:
+            text: Text to generate embedding for
+            provider: Provider to use
+            
+        Returns:
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
+        """
+        if provider == "sentence_transformers":
             return self._generate_embedding_sentence_transformers(text)
-        elif self.embedding_provider == "ollama":
+        elif provider == "ollama":
             return self._generate_embedding_ollama(text)
-        elif self.embedding_provider == "openai":
+        elif provider == "openai":
             return self._generate_embedding_openai(text)
         else:
-            return None, f"Unsupported embedding provider: {self.embedding_provider}"
+            return None, f"Unsupported embedding provider: {provider}"
     
     def _generate_embedding_service(
         self, 
@@ -135,28 +185,10 @@ class EmbeddingGenerator:
                 data = response.json()
                 return data["embedding"], None
             else:
-                # Try fallback to local embedding generation
-                print(f"Embedding service error: {response.status_code}, {response.text}")
-                print("Falling back to local embedding generation...")
-                
-                if self.embedding_provider == "sentence_transformers":
-                    return self._generate_embedding_sentence_transformers(text)
-                elif self.embedding_provider == "ollama":
-                    return self._generate_embedding_ollama(text)
-                else:
-                    return None, f"Embedding service error: {response.status_code}, {response.text}"
+                return None, f"Embedding service error: {response.status_code}, {response.text}"
         
         except Exception as e:
-            # Try fallback to local embedding generation
-            print(f"Embedding service error: {e}")
-            print("Falling back to local embedding generation...")
-            
-            if self.embedding_provider == "sentence_transformers":
-                return self._generate_embedding_sentence_transformers(text)
-            elif self.embedding_provider == "ollama":
-                return self._generate_embedding_ollama(text)
-            else:
-                return None, f"Embedding service error: {str(e)}"
+            return None, f"Embedding service error: {str(e)}"
     
     def _generate_embedding_sentence_transformers(
         self, 
@@ -205,23 +237,40 @@ class EmbeddingGenerator:
             Tuple[Optional[List[float]], Optional[str]]: 
                 (embedding, error_message)
         """
-        if not OLLAMA_AVAILABLE:
-            return None, "ollama not available"
+        # Try using the Python client first if available
+        if OLLAMA_AVAILABLE:
+            try:
+                # Generate embedding
+                response = ollama.embeddings(
+                    model=self.embedding_model,
+                    prompt=text
+                )
+                
+                # Extract embedding
+                embedding = response["embedding"]
+                
+                return embedding, None
+            
+            except Exception as e:
+                print(f"Ollama Python client failed: {e}, trying REST API...")
         
+        # Fall back to REST API
         try:
-            # Generate embedding
-            response = ollama.embeddings(
-                model=self.embedding_model,
-                prompt=text
+            # Call Ollama API
+            response = requests.post(
+                f"{self.ollama_url}/embeddings",
+                json={"model": self.embedding_model, "prompt": text}
             )
             
-            # Extract embedding
-            embedding = response["embedding"]
-            
-            return embedding, None
+            # Check if request was successful
+            if response.status_code == 200:
+                data = response.json()
+                return data["embedding"], None
+            else:
+                return None, f"Ollama API error: {response.status_code}, {response.text}"
         
         except Exception as e:
-            return None, f"Error generating embedding with ollama: {str(e)}"
+            return None, f"Error generating embedding with Ollama: {str(e)}"
     
     def _generate_embedding_openai(
         self, 

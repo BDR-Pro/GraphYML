@@ -10,7 +10,59 @@ The Docker Compose setup includes the following services:
 
 2. **Embedding Service** (`embedding-service`): A dedicated service for generating embeddings using Hugging Face models. This service can be scaled independently for better performance.
 
-3. **Ollama Service** (`ollama`): An optional service for local LLM embeddings using Ollama. This is useful for environments without internet access or when you want to use custom models.
+3. **Ollama Service** (`ollama`): A service for local LLM embeddings using Ollama. This can be used directly by GraphYML or via the embedding service.
+
+## Flexible Configuration
+
+The Docker Compose setup is designed to be flexible, allowing you to choose the embedding provider that best suits your needs:
+
+### Option 1: Using the Embedding Service (Default)
+
+This option uses the dedicated embedding service, which is ideal for production environments where you need scalability and reliability.
+
+```yaml
+graphyml:
+  environment:
+    - EMBEDDING_PROVIDER=service
+    - EMBEDDING_SERVICE=http://embedding-service:8000/api/embeddings
+    - FALLBACK_EMBEDDING_PROVIDER=sentence_transformers
+  depends_on:
+    - embedding-service
+```
+
+### Option 2: Direct Ollama Integration
+
+This option connects GraphYML directly to Ollama, bypassing the embedding service. This is simpler but less scalable.
+
+```yaml
+graphyml:
+  environment:
+    - EMBEDDING_PROVIDER=ollama
+    - OLLAMA_URL=http://ollama:11434/api
+  depends_on:
+    - ollama
+```
+
+### Option 3: Local Sentence Transformers
+
+This option uses the Sentence Transformers library directly within GraphYML. This is the simplest option but uses more memory in the GraphYML container.
+
+```yaml
+graphyml:
+  environment:
+    - EMBEDDING_PROVIDER=sentence_transformers
+```
+
+### Option 4: OpenAI API
+
+This option uses OpenAI's API for embeddings. This requires an API key but provides high-quality embeddings.
+
+```yaml
+graphyml:
+  environment:
+    - EMBEDDING_PROVIDER=openai
+    - OPENAI_API_KEY=your-api-key
+```
 
 ## Prerequisites
 
@@ -25,12 +77,14 @@ The Docker Compose setup includes the following services:
    cd GraphYML
    ```
 
-2. Start the services:
+2. Choose your configuration by editing the `docker-compose.yml` file (see options above)
+
+3. Start the services:
    ```bash
    docker-compose up -d
    ```
 
-3. Access the application:
+4. Access the application:
    - GraphYML UI: http://localhost:8501
    - Embedding Service API: http://localhost:8000
    - Ollama API: http://localhost:11434
@@ -43,7 +97,12 @@ You can configure the services using environment variables in the `docker-compos
 
 #### GraphYML Application
 
-- `EMBEDDING_SERVICE`: URL of the embedding service (default: `http://embedding-service:8000/api/embeddings`)
+- `EMBEDDING_PROVIDER`: The embedding provider to use (`service`, `ollama`, `sentence_transformers`, or `openai`)
+- `EMBEDDING_SERVICE`: URL of the embedding service (when using `service` provider)
+- `OLLAMA_URL`: URL of the Ollama API (when using `ollama` provider)
+- `EMBEDDING_MODEL`: Name of the model to use
+- `FALLBACK_EMBEDDING_PROVIDER`: Provider to use if the primary provider fails
+- `OPENAI_API_KEY`: OpenAI API key (when using `openai` provider)
 - `STREAMLIT_SERVER_PORT`: Port for the Streamlit server (default: `8501`)
 - `STREAMLIT_SERVER_HEADLESS`: Run Streamlit in headless mode (default: `true`)
 
@@ -89,7 +148,7 @@ You can adjust these limits in the `docker-compose.yml` file based on your syste
 
 ### Embedding Service Not Available
 
-If the embedding service is not available, the GraphYML application will fall back to local embedding generation using the configured provider. You can check the logs for error messages:
+If the embedding service is not available, the GraphYML application will fall back to the configured fallback provider. You can check the logs for error messages:
 
 ```bash
 docker-compose logs embedding-service
@@ -129,17 +188,6 @@ If embedding generation is slow, you can try:
 
 ## Advanced Configuration
 
-### Using OpenAI Embeddings
-
-To use OpenAI embeddings, add the OpenAI API key to the GraphYML application service:
-
-```yaml
-graphyml:
-  environment:
-    - OPENAI_API_KEY=your-api-key
-    - EMBEDDING_PROVIDER=openai
-```
-
 ### Custom Embedding Models
 
 To use a custom embedding model, update the `MODEL_NAME` environment variable:
@@ -166,4 +214,3 @@ graphyml:
     - EMBEDDING_PROVIDER=ollama
     - EMBEDDING_MODEL=your-custom-model
 ```
-
