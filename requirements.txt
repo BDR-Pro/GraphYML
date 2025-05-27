@@ -9,3 +9,4 @@ pyvis>=0.3.1
 requests>=2.28.0
 pytest>=7.0.0
 pytest-cov>=4.0.0
+sentence-transformers>=2.2.2

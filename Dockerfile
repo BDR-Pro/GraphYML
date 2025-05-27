@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Explicitly install cerberus to ensure it's available
+RUN pip install --no-cache-dir cerberus>=1.3.4
+
 # Copy application code
 COPY . .
 
@@ -26,4 +29,4 @@ ENV PYTHONUNBUFFERED=1 \
     STREAMLIT_SERVER_HEADLESS=true
 
 # Run the application
-CMD ["streamlit", "run", "src/app.py"]
+CMD ["streamlit", "run", "db.py"]
