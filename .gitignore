@@ -2,3 +2,4 @@ cleaned_data/converted_yml
 *.zip
 *.pyc
 .coverage
+.pytest_cache/
