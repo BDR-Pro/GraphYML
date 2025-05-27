@@ -1,180 +1,267 @@
 """
-Embedding generation and similarity computation for GraphYML.
-Supports both local Ollama models and remote API services.
+Embedding generation and similarity calculation for GraphYML.
 """
+import os
 import json
 import requests
+from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
+
+# Try to import sentence_transformers, but don't fail if not available
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+
+# Try to import ollama, but don't fail if not available
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+
+
+def embedding_similarity(embedding1: List[float], embedding2: List[float]) -> float:
+    """
+    Calculate cosine similarity between two embeddings.
+    
+    Args:
+        embedding1: First embedding
+        embedding2: Second embedding
+        
+    Returns:
+        float: Cosine similarity
+    """
+    # Convert to numpy arrays
+    vec1 = np.array(embedding1)
+    vec2 = np.array(embedding2)
+    
+    # Calculate cosine similarity
+    dot_product = np.dot(vec1, vec2)
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+    
+    # Avoid division by zero
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    
+    return dot_product / (norm1 * norm2)
+
 
 class EmbeddingGenerator:
     """
-    Class to handle text embedding generation using various backends.
-    Currently supports Ollama and provides a fallback for testing.
+    Embedding generator for GraphYML.
+    Supports multiple embedding providers.
     """
     
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialize the embedding generator with configuration.
+        Initialize the embedding generator.
         
         Args:
-            config (dict): Configuration dictionary with embedding settings
+            config: Configuration dictionary
         """
         self.config = config
-        self.ollama_url = config.get("ollama_url", "http://localhost:11434/api/embeddings")
-        self.ollama_model = config.get("ollama_model", "all-minilm-l6-v2")
-        self.embedding_dimension = config.get("embedding_dimension", 384)
+        self.embedding_provider = config.get("embedding_provider", "sentence_transformers")
+        self.embedding_model = config.get("embedding_model", "all-MiniLM-L6-v2")
+        self.embedding_service_url = os.environ.get(
+            "EMBEDDING_SERVICE", 
+            config.get("embedding_service_url")
+        )
         
-    def generate_embedding(self, text):
-        """
-        Generate embedding for the given text.
+        # Initialize embedding model
+        self.model = None
         
-        Args:
-            text (str): Text to generate embedding for
-            
-        Returns:
-            tuple: (embedding_vector, error_message)
-        """
-        if not text:
-            return None, "Empty text provided"
-            
-        # Try Ollama first
-        embedding, error = self._generate_ollama_embedding(text)
-        
-        # If Ollama fails and we're in development/testing, use fallback
-        if embedding is None and self.config.get("allow_fallback", False):
-            embedding, error = self._generate_fallback_embedding(text)
-            
-        return embedding, error
+        # Try to initialize the model if using sentence_transformers
+        if self.embedding_provider == "sentence_transformers" and SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                self.model = SentenceTransformer(self.embedding_model)
+                print(f"Initialized sentence_transformers model: {self.embedding_model}")
+            except Exception as e:
+                print(f"Error initializing sentence_transformers model: {e}")
     
-    def _generate_ollama_embedding(self, text):
+    def generate_embedding(
+        self, 
+        text: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
         """
-        Generate embedding using Ollama API.
+        Generate embedding for text.
         
         Args:
-            text (str): Text to generate embedding for
+            text: Text to generate embedding for
             
         Returns:
-            tuple: (embedding_vector, error_message)
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
+        """
+        # Check if embedding service URL is available
+        if self.embedding_service_url:
+            return self._generate_embedding_service(text)
+        
+        # Try different providers
+        if self.embedding_provider == "sentence_transformers":
+            return self._generate_embedding_sentence_transformers(text)
+        elif self.embedding_provider == "ollama":
+            return self._generate_embedding_ollama(text)
+        elif self.embedding_provider == "openai":
+            return self._generate_embedding_openai(text)
+        else:
+            return None, f"Unsupported embedding provider: {self.embedding_provider}"
+    
+    def _generate_embedding_service(
+        self, 
+        text: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
+        """
+        Generate embedding using the embedding service.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
         """
         try:
+            # Call embedding service
             response = requests.post(
-                self.ollama_url,
-                json={"model": self.ollama_model, "prompt": text},
-                timeout=30
+                f"{self.embedding_service_url}",
+                json={"text": text}
             )
             
-            if response.status_code != 200:
-                return None, f"Ollama API error: {response.status_code} - {response.text}"
+            # Check if request was successful
+            if response.status_code == 200:
+                data = response.json()
+                return data["embedding"], None
+            else:
+                # Try fallback to local embedding generation
+                print(f"Embedding service error: {response.status_code}, {response.text}")
+                print("Falling back to local embedding generation...")
                 
-            result = response.json()
-            embedding = result.get("embedding")
-            
-            if not embedding:
-                return None, "No embedding returned from Ollama API"
-                
-            return embedding, None
-            
-        except requests.RequestException as e:
-            return None, f"Ollama API request failed: {str(e)}"
-        except json.JSONDecodeError:
-            return None, "Invalid JSON response from Ollama API"
+                if self.embedding_provider == "sentence_transformers":
+                    return self._generate_embedding_sentence_transformers(text)
+                elif self.embedding_provider == "ollama":
+                    return self._generate_embedding_ollama(text)
+                else:
+                    return None, f"Embedding service error: {response.status_code}, {response.text}"
+        
         except Exception as e:
-            return None, f"Unexpected error: {str(e)}"
+            # Try fallback to local embedding generation
+            print(f"Embedding service error: {e}")
+            print("Falling back to local embedding generation...")
+            
+            if self.embedding_provider == "sentence_transformers":
+                return self._generate_embedding_sentence_transformers(text)
+            elif self.embedding_provider == "ollama":
+                return self._generate_embedding_ollama(text)
+            else:
+                return None, f"Embedding service error: {str(e)}"
     
-    def _generate_fallback_embedding(self, text):
+    def _generate_embedding_sentence_transformers(
+        self, 
+        text: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
         """
-        Generate a deterministic pseudo-embedding for testing purposes.
+        Generate embedding using sentence_transformers.
         
         Args:
-            text (str): Text to generate embedding for
+            text: Text to generate embedding for
             
         Returns:
-            tuple: (embedding_vector, error_message)
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
         """
-        # Create a deterministic but unique embedding based on text content
-        import hashlib
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            return None, "sentence_transformers not available"
         
-        # Get hash of text
-        text_hash = hashlib.md5(text.encode()).hexdigest()
-        
-        # Convert hash to a list of floats
-        hash_values = []
-        for i in range(0, min(self.embedding_dimension * 2, len(text_hash)), 2):
-            if i < len(text_hash) - 1:
-                hash_values.append(int(text_hash[i:i+2], 16))
-        
-        # Pad or truncate to match embedding dimension
-        while len(hash_values) < self.embedding_dimension:
-            hash_values.append(0)
-        hash_values = hash_values[:self.embedding_dimension]
-        
-        # Normalize to unit length
-        embedding = np.array(hash_values, dtype=float)
-        norm = np.linalg.norm(embedding)
-        if norm > 0:
-            embedding = embedding / norm
+        try:
+            # Initialize model if not already initialized
+            if self.model is None:
+                self.model = SentenceTransformer(self.embedding_model)
             
-        return embedding.tolist(), "Using fallback embedding (not for production)"
-
-
-def embedding_similarity(a, b):
-    """
-    Compute cosine similarity between two embedding vectors.
-    
-    Args:
-        a (list): First embedding vector
-        b (list): Second embedding vector
-        
-    Returns:
-        float: Cosine similarity (0-1)
-    """
-    if not a or not b:
-        return 0.0
-    try:
-        a_array = np.array(a).reshape(1, -1)
-        b_array = np.array(b).reshape(1, -1)
-        return float(cosine_similarity(a_array, b_array)[0][0])
-    except (ValueError, TypeError):
-        return 0.0
-
-
-def batch_generate_embeddings(graph, embedding_generator, text_extractor=None):
-    """
-    Generate embeddings for all nodes in the graph.
-    
-    Args:
-        graph (dict): Graph dictionary
-        embedding_generator (EmbeddingGenerator): Embedding generator instance
-        text_extractor (callable, optional): Function to extract text from node
+            # Generate embedding
+            embedding = self.model.encode(text)
             
-    Returns:
-        tuple: (updated_graph, errors)
-    """
-    if text_extractor is None:
-        # Default extractor uses title, overview, and tagline
-        def default_extractor(node):
-            text_parts = []
-            if node.get("title"):
-                text_parts.append(node["title"])
-            if node.get("overview"):
-                text_parts.append(node["overview"])
-            if node.get("tagline"):
-                text_parts.append(node["tagline"])
-            return " ".join(text_parts)
-        
-        text_extractor = default_extractor
-    
-    errors = []
-    for key, node in graph.items():
-        if "embedding" not in node:
-            text = text_extractor(node)
-            embedding, error = embedding_generator.generate_embedding(text)
+            # Convert to list
+            embedding_list = embedding.tolist()
             
-            if embedding:
-                node["embedding"] = embedding
-            else:
-                errors.append((key, error))
+            return embedding_list, None
+        
+        except Exception as e:
+            return None, f"Error generating embedding with sentence_transformers: {str(e)}"
     
-    return graph, errors
-
+    def _generate_embedding_ollama(
+        self, 
+        text: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
+        """
+        Generate embedding using Ollama.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
+        """
+        if not OLLAMA_AVAILABLE:
+            return None, "ollama not available"
+        
+        try:
+            # Generate embedding
+            response = ollama.embeddings(
+                model=self.embedding_model,
+                prompt=text
+            )
+            
+            # Extract embedding
+            embedding = response["embedding"]
+            
+            return embedding, None
+        
+        except Exception as e:
+            return None, f"Error generating embedding with ollama: {str(e)}"
+    
+    def _generate_embedding_openai(
+        self, 
+        text: str
+    ) -> Tuple[Optional[List[float]], Optional[str]]:
+        """
+        Generate embedding using OpenAI API.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            Tuple[Optional[List[float]], Optional[str]]: 
+                (embedding, error_message)
+        """
+        # Check if OpenAI API key is available
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return None, "OpenAI API key not available"
+        
+        try:
+            # Import OpenAI
+            import openai
+            
+            # Set API key
+            openai.api_key = api_key
+            
+            # Generate embedding
+            response = openai.Embedding.create(
+                model="text-embedding-ada-002",
+                input=text
+            )
+            
+            # Extract embedding
+            embedding = response["data"][0]["embedding"]
+            
+            return embedding, None
+        
+        except ImportError:
+            return None, "openai package not available"
+        
+        except Exception as e:
+            return None, f"Error generating embedding with OpenAI: {str(e)}"

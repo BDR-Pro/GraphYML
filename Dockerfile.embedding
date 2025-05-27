@@ -1,0 +1,17 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.embedding.txt .
+RUN pip install --no-cache-dir -r requirements.embedding.txt
+
+# Copy embedding service code
+COPY src/embedding_service.py .
+
+# Expose port
+EXPOSE 8000
+
+# Run the embedding service
+CMD ["python", "embedding_service.py"]
+
