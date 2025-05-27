@@ -4,10 +4,49 @@ Provides functions for working with embeddings.
 """
 import math
 import logging
-from typing import List, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Callable
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingGenerator:
+    """
+    Class for generating embeddings.
+    """
+    
+    def __init__(self, model: Optional[str] = None):
+        """
+        Initialize the embedding generator.
+        
+        Args:
+            model: Model to use for embedding generation
+        """
+        self.model = model
+    
+    def generate(self, text: str) -> List[float]:
+        """
+        Generate an embedding for text.
+        
+        Args:
+            text: Text to generate embedding for
+            
+        Returns:
+            List[float]: Embedding
+        """
+        return generate_embedding(text, self.model)
+    
+    def batch_generate(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts.
+        
+        Args:
+            texts: Texts to generate embeddings for
+            
+        Returns:
+            List[List[float]]: List of embeddings
+        """
+        return [self.generate(text) for text in texts]
 
 
 def embedding_similarity(embedding1: List[float], embedding2: List[float]) -> float:
@@ -80,4 +119,18 @@ def generate_embedding(text: str, model: Optional[str] = None) -> List[float]:
         embedding = embedding + [0.0] * (128 - len(embedding))
     
     return embedding
+
+
+def batch_generate_embeddings(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+    """
+    Generate embeddings for multiple texts.
+    
+    Args:
+        texts: Texts to generate embeddings for
+        model: Model to use for embedding generation
+        
+    Returns:
+        List[List[float]]: List of embeddings
+    """
+    return [generate_embedding(text, model) for text in texts]
 
