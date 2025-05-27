@@ -19,6 +19,7 @@ from src.models.indexing import IndexManager, IndexType
 from src.models.query_engine import QueryEngine
 from src.models.auth import AuthManager, User, Permission, Role
 from src.models.embeddings import EmbeddingGenerator
+from src.models.orm import GraphORM
 
 
 class Database:
@@ -79,6 +80,9 @@ class Database:
         )
         
         self.query_engine = QueryEngine(self.graph)
+        
+        # Initialize ORM interface
+        self.orm = GraphORM(self)
         
         # Create default indexes if they don't exist
         self._create_default_indexes()
@@ -449,7 +453,7 @@ class Database:
     
     def search_by_embedding(
         self,
-        text: str,
+        text_or_embedding: Union[str, List[float]],
         threshold: float = 0.7,
         limit: int = 10,
         user: User
@@ -458,7 +462,7 @@ class Database:
         Search by text similarity using embeddings.
         
         Args:
-            text: Text to search for
+            text_or_embedding: Text or embedding vector to search for
             threshold: Similarity threshold
             limit: Maximum number of results
             user: User executing the search
@@ -470,11 +474,14 @@ class Database:
         if not user.has_permission(Permission.READ):
             return [], "Permission denied"
         
-        # Generate embedding for query text
-        embedding, error = self.embedding_generator.generate_embedding(text)
-        
-        if embedding is None:
-            return [], f"Failed to generate embedding: {error}"
+        # Generate embedding if text is provided
+        if isinstance(text_or_embedding, str):
+            embedding, error = self.embedding_generator.generate_embedding(text_or_embedding)
+            
+            if embedding is None:
+                return [], f"Failed to generate embedding: {error}"
+        else:
+            embedding = text_or_embedding
         
         # Get vector index
         vector_index = self.index_manager.get_index("embedding_index")
@@ -758,8 +765,10 @@ class Database:
                 
                 self.auth_manager = AuthManager(str(self.auth_dir))
                 
+                # Reinitialize ORM interface
+                self.orm = GraphORM(self)
+                
                 return True, None
         
         except Exception as e:
             return False, f"Restore failed: {str(e)}"
-

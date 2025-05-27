@@ -113,6 +113,46 @@ results = db.query("rating >= 8.0 AND runtime < 120", user)
 results = db.query("genres contains 'Sci-Fi' AND director = 'Christopher Nolan' AND NOT year < 2010", user)
 ```
 
+### ORM-Style Query Examples
+
+```python
+# Find by field
+movies = db.orm.find_by_field("director", "Christopher Nolan", "=", user)
+
+# Find by genre
+sci_fi_movies = db.orm.find_by_genre("Sci-Fi", user)
+
+# Find by tag
+action_movies = db.orm.find_by_tag("action", user)
+
+# Find by year range
+recent_movies = db.orm.find_by_year_range(2010, 2023, user)
+
+# Find by rating
+top_rated = db.orm.find_by_rating(8.5, user)
+
+# Find by text search
+results = db.orm.find_by_text_search("space travel", ["title", "overview"], user)
+
+# Find by similarity
+similar_movies, scores = db.orm.find_by_similarity(text="space adventure", threshold=0.7, user=user)
+
+# Find by combined criteria
+results = db.orm.find_by_combined_criteria(
+    genres=["Sci-Fi", "Action"],
+    year_range=(2010, 2023),
+    min_rating=8.0,
+    director="Christopher Nolan",
+    similar_to="tt0816692",  # Interstellar
+    user=user
+)
+
+# Group and aggregate
+by_director = db.orm.group_by_field("director", user)
+director_counts = db.orm.aggregate_by_field("director", "count", user)
+avg_ratings = db.orm.aggregate_by_field("director", "avg", user)
+```
+
 ### Transaction Examples
 
 ```python
@@ -191,4 +231,3 @@ Planned improvements to the database features:
    - Field-level access control
    - Audit logging
    - Encryption at rest
-

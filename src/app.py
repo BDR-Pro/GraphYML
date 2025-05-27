@@ -583,7 +583,7 @@ def show_query_interface():
     # Query types
     query_type = st.radio(
         "Query Type",
-        ["Simple Query", "Text Search", "Embedding Similarity"],
+        ["Simple Query", "ORM Query", "Text Search", "Embedding Similarity"],
         horizontal=True
     )
     
@@ -633,33 +633,48 @@ def show_query_interface():
                         with st.expander("View Full Node"):
                             st.json(node)
     
-    elif query_type == "Text Search":
-        text = st.text_input("Search Text", key="text_search")
+    elif query_type == "ORM Query":
+        st.write("""
+        ### ORM-Style Query
         
-        if st.button("Search"):
-            if not text:
-                st.warning("Please enter search text")
-                return
+        Use a more user-friendly interface to query the database.
+        """)
+        
+        # Create tabs for different ORM query types
+        orm_tabs = st.tabs([
+            "By Field", "By Genre/Tag", "By Year/Rating", "By Similarity", "Combined"
+        ])
+        
+        with orm_tabs[0]:
+            # Query by field
+            field = st.selectbox(
+                "Field",
+                ["title", "director", "category", "id"],
+                key="orm_field"
+            )
             
-            # Use fulltext index
-            index = st.session_state.database.index_manager.get_index("title_index")
+            operator = st.selectbox(
+                "Operator",
+                ["=", "!=", ">", ">=", "<", "<=", "contains", "startswith", "endswith"],
+                key="orm_operator"
+            )
             
-            if index:
-                results = index.search(text)
-            else:
-                # Fallback to query
-                results, _ = st.session_state.database.query(
-                    f"title contains \"{text}\"", user
-                )
+            value = st.text_input("Value", key="orm_value")
             
-            st.success(f"Found {len(results)} results")
-            
-            # Display results
-            for key in results:
-                node, _ = st.session_state.database.get_node(key, user)
+            if st.button("Search by Field"):
+                if not value:
+                    st.warning("Please enter a value")
+                    return
                 
-                if node:
-                    with st.expander(f"{node.get('title', key)}"):
+                results = st.session_state.database.orm.find_by_field(
+                    field, value, operator, user
+                )
+                
+                st.success(f"Found {len(results)} results")
+                
+                # Display results
+                for node in results:
+                    with st.expander(f"{node.get('title', node.get('id', 'Unknown'))}"):
                         # Display key fields
                         st.write(f"**ID:** {node.get('id', 'N/A')}")
                         st.write(f"**Title:** {node.get('title', 'N/A')}")
@@ -670,8 +685,372 @@ def show_query_interface():
                         # Show full node as JSON
                         with st.expander("View Full Node"):
                             st.json(node)
+        
+        with orm_tabs[1]:
+            # Query by genre/tag
+            search_type = st.radio(
+                "Search Type",
+                ["Genre", "Tag"],
+                horizontal=True,
+                key="orm_genre_tag_type"
+            )
+            
+            value = st.text_input(
+                "Genre" if search_type == "Genre" else "Tag",
+                key="orm_genre_tag_value"
+            )
+            
+            if st.button("Search by " + search_type):
+                if not value:
+                    st.warning(f"Please enter a {search_type.lower()}")
+                    return
+                
+                if search_type == "Genre":
+                    results = st.session_state.database.orm.find_by_genre(value, user)
+                else:
+                    results = st.session_state.database.orm.find_by_tag(value, user)
+                
+                st.success(f"Found {len(results)} results")
+                
+                # Display results
+                for node in results:
+                    with st.expander(f"{node.get('title', node.get('id', 'Unknown'))}"):
+                        # Display key fields
+                        st.write(f"**ID:** {node.get('id', 'N/A')}")
+                        st.write(f"**Title:** {node.get('title', 'N/A')}")
+                        
+                        if search_type == "Genre" and 'genres' in node:
+                            st.write(f"**Genres:** {', '.join(node['genres'])}")
+                        
+                        if search_type == "Tag" and 'tags' in node:
+                            st.write(f"**Tags:** {', '.join(node['tags'])}")
+                        
+                        # Show full node as JSON
+                        with st.expander("View Full Node"):
+                            st.json(node)
+        
+        with orm_tabs[2]:
+            # Query by year/rating
+            search_type = st.radio(
+                "Search Type",
+                ["Year Range", "Minimum Rating"],
+                horizontal=True,
+                key="orm_year_rating_type"
+            )
+            
+            if search_type == "Year Range":
+                min_year = st.number_input("Min Year", min_value=1900, max_value=2100, value=2000)
+                max_year = st.number_input("Max Year", min_value=1900, max_value=2100, value=2023)
+                
+                if st.button("Search by Year Range"):
+                    results = st.session_state.database.orm.find_by_year_range(
+                        min_year, max_year, user
+                    )
+                    
+                    st.success(f"Found {len(results)} results")
+                    
+                    # Display results
+                    for node in results:
+                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} ({node.get('year', 'N/A')})"):
+                            # Display key fields
+                            st.write(f"**ID:** {node.get('id', 'N/A')}")
+                            st.write(f"**Title:** {node.get('title', 'N/A')}")
+                            st.write(f"**Year:** {node.get('year', 'N/A')}")
+                            
+                            # Show full node as JSON
+                            with st.expander("View Full Node"):
+                                st.json(node)
+            else:
+                min_rating = st.slider("Minimum Rating", 0.0, 10.0, 8.0, 0.1)
+                
+                if st.button("Search by Rating"):
+                    results = st.session_state.database.orm.find_by_rating(
+                        min_rating, user
+                    )
+                    
+                    st.success(f"Found {len(results)} results")
+                    
+                    # Display results
+                    for node in results:
+                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} ({node.get('rating', 'N/A')})"):
+                            # Display key fields
+                            st.write(f"**ID:** {node.get('id', 'N/A')}")
+                            st.write(f"**Title:** {node.get('title', 'N/A')}")
+                            st.write(f"**Rating:** {node.get('rating', 'N/A')}")
+                            
+                            # Show full node as JSON
+                            with st.expander("View Full Node"):
+                                st.json(node)
+        
+        with orm_tabs[3]:
+            # Query by similarity
+            similarity_type = st.radio(
+                "Similarity Type",
+                ["Text", "Node ID"],
+                horizontal=True,
+                key="orm_similarity_type"
+            )
+            
+            if similarity_type == "Text":
+                text = st.text_input("Text", key="orm_similarity_text")
+                
+                threshold = st.slider(
+                    "Similarity Threshold", 
+                    0.0, 1.0, 0.7, 0.05,
+                    key="orm_similarity_threshold"
+                )
+                
+                limit = st.slider(
+                    "Result Limit", 
+                    1, 50, 10,
+                    key="orm_similarity_limit"
+                )
+                
+                if st.button("Search by Text Similarity"):
+                    if not text:
+                        st.warning("Please enter text")
+                        return
+                    
+                    results = st.session_state.database.orm.find_by_similarity(
+                        text=text,
+                        threshold=threshold,
+                        limit=limit,
+                        user=user
+                    )
+                    
+                    st.success(f"Found {len(results)} results")
+                    
+                    # Display results
+                    for node, score in results:
+                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} (Score: {score:.2f})"):
+                            # Display key fields
+                            st.write(f"**ID:** {node.get('id', 'N/A')}")
+                            st.write(f"**Title:** {node.get('title', 'N/A')}")
+                            st.write(f"**Similarity Score:** {score:.4f}")
+                            
+                            # Show full node as JSON
+                            with st.expander("View Full Node"):
+                                st.json(node)
+            else:
+                # Get all node IDs
+                node_ids = list(st.session_state.database.graph.keys())
+                
+                node_id = st.selectbox(
+                    "Node ID",
+                    node_ids,
+                    key="orm_similarity_node_id"
+                )
+                
+                threshold = st.slider(
+                    "Similarity Threshold", 
+                    0.0, 1.0, 0.7, 0.05,
+                    key="orm_similarity_node_threshold"
+                )
+                
+                limit = st.slider(
+                    "Result Limit", 
+                    1, 50, 10,
+                    key="orm_similarity_node_limit"
+                )
+                
+                if st.button("Search by Node Similarity"):
+                    if not node_id:
+                        st.warning("Please select a node")
+                        return
+                    
+                    results = st.session_state.database.orm.find_by_similarity(
+                        node_id=node_id,
+                        threshold=threshold,
+                        limit=limit,
+                        user=user
+                    )
+                    
+                    st.success(f"Found {len(results)} results")
+                    
+                    # Display results
+                    for node, score in results:
+                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} (Score: {score:.2f})"):
+                            # Display key fields
+                            st.write(f"**ID:** {node.get('id', 'N/A')}")
+                            st.write(f"**Title:** {node.get('title', 'N/A')}")
+                            st.write(f"**Similarity Score:** {score:.4f}")
+                            
+                            # Show full node as JSON
+                            with st.expander("View Full Node"):
+                                st.json(node)
+        
+        with orm_tabs[4]:
+            # Combined query
+            st.write("### Combined Query")
+            st.write("Search using multiple criteria")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                genres = st.multiselect(
+                    "Genres",
+                    ["Action", "Adventure", "Comedy", "Drama", "Sci-Fi", "Thriller"],
+                    key="orm_combined_genres"
+                )
+                
+                tags = st.multiselect(
+                    "Tags",
+                    ["sci-fi", "action", "comedy", "drama", "space", "time-travel"],
+                    key="orm_combined_tags"
+                )
+                
+                min_year = st.number_input(
+                    "Min Year", 
+                    min_value=1900, 
+                    max_value=2100, 
+                    value=2000,
+                    key="orm_combined_min_year"
+                )
+                
+                max_year = st.number_input(
+                    "Max Year", 
+                    min_value=1900, 
+                    max_value=2100, 
+                    value=2023,
+                    key="orm_combined_max_year"
+                )
+            
+            with col2:
+                min_rating = st.slider(
+                    "Minimum Rating", 
+                    0.0, 10.0, 0.0, 0.1,
+                    key="orm_combined_min_rating"
+                )
+                
+                director = st.text_input(
+                    "Director",
+                    key="orm_combined_director"
+                )
+                
+                text_search = st.text_input(
+                    "Text Search",
+                    key="orm_combined_text_search"
+                )
+                
+                # Get all node IDs
+                node_ids = [""] + list(st.session_state.database.graph.keys())
+                
+                similar_to = st.selectbox(
+                    "Similar To (Node ID)",
+                    node_ids,
+                    key="orm_combined_similar_to"
+                )
+                
+                similarity_threshold = st.slider(
+                    "Similarity Threshold", 
+                    0.0, 1.0, 0.7, 0.05,
+                    key="orm_combined_similarity_threshold"
+                )
+            
+            if st.button("Execute Combined Query"):
+                # Prepare parameters
+                params = {}
+                
+                if genres:
+                    params["genres"] = genres
+                
+                if tags:
+                    params["tags"] = tags
+                
+                if min_year > 1900 or max_year < 2023:
+                    params["year_range"] = (min_year, max_year)
+                
+                if min_rating > 0:
+                    params["min_rating"] = min_rating
+                
+                if director:
+                    params["director"] = director
+                
+                if text_search:
+                    params["text_search"] = text_search
+                
+                if similar_to:
+                    params["similar_to"] = similar_to
+                    params["similarity_threshold"] = similarity_threshold
+                
+                # Execute query
+                results = st.session_state.database.orm.find_by_combined_criteria(
+                    **params,
+                    user=user
+                )
+                
+                st.success(f"Found {len(results)} results")
+                
+                # Display results
+                for node in results:
+                    with st.expander(f"{node.get('title', node.get('id', 'Unknown'))}"):
+                        # Display key fields
+                        st.write(f"**ID:** {node.get('id', 'N/A')}")
+                        st.write(f"**Title:** {node.get('title', 'N/A')}")
+                        
+                        if 'genres' in node:
+                            st.write(f"**Genres:** {', '.join(node['genres'])}")
+                        
+                        if 'tags' in node:
+                            st.write(f"**Tags:** {', '.join(node['tags'])}")
+                        
+                        if 'year' in node:
+                            st.write(f"**Year:** {node['year']}")
+                        
+                        if 'rating' in node:
+                            st.write(f"**Rating:** {node['rating']}")
+                        
+                        if 'director' in node:
+                            st.write(f"**Director:** {node['director']}")
+                        
+                        # Show full node as JSON
+                        with st.expander("View Full Node"):
+                            st.json(node)
+    
+    elif query_type == "Text Search":
+        st.write("""
+        ### Text Search
+        
+        Search for text across multiple fields.
+        """)
+        
+        text = st.text_input("Search Text", key="text_search")
+        
+        if st.button("Search"):
+            if not text:
+                st.warning("Please enter search text")
+                return
+            
+            # Use ORM for text search
+            results = st.session_state.database.orm.find_by_text_search(
+                text,
+                ["title", "overview", "tagline"],
+                user
+            )
+            
+            st.success(f"Found {len(results)} results")
+            
+            # Display results
+            for node in results:
+                with st.expander(f"{node.get('title', node.get('id', 'Unknown'))}"):
+                    # Display key fields
+                    st.write(f"**ID:** {node.get('id', 'N/A')}")
+                    st.write(f"**Title:** {node.get('title', 'N/A')}")
+                    
+                    if 'tags' in node:
+                        st.write(f"**Tags:** {', '.join(node['tags'])}")
+                    
+                    # Show full node as JSON
+                    with st.expander("View Full Node"):
+                        st.json(node)
     
     else:  # Embedding Similarity
+        st.write("""
+        ### Embedding Similarity Search
+        
+        Search for nodes with similar embeddings.
+        """)
+        
         text = st.text_input("Text for Similarity Search", key="embedding_search")
         threshold = st.slider("Similarity Threshold", 0.0, 1.0, 0.7, 0.05)
         limit = st.slider("Result Limit", 1, 50, 10)
@@ -681,33 +1060,30 @@ def show_query_interface():
                 st.warning("Please enter text for similarity search")
                 return
             
-            results, error = st.session_state.database.search_by_embedding(
-                text, threshold, limit, user
+            # Use ORM for similarity search
+            results = st.session_state.database.orm.find_by_similarity(
+                text=text,
+                threshold=threshold,
+                limit=limit,
+                user=user
             )
-            
-            if error:
-                st.error(error)
-                return
             
             st.success(f"Found {len(results)} results")
             
             # Display results
-            for key, score in results:
-                node, _ = st.session_state.database.get_node(key, user)
-                
-                if node:
-                    with st.expander(f"{node.get('title', key)} (Score: {score:.2f})"):
-                        # Display key fields
-                        st.write(f"**ID:** {node.get('id', 'N/A')}")
-                        st.write(f"**Title:** {node.get('title', 'N/A')}")
-                        st.write(f"**Similarity Score:** {score:.4f}")
-                        
-                        if 'tags' in node:
-                            st.write(f"**Tags:** {', '.join(node['tags'])}")
-                        
-                        # Show full node as JSON
-                        with st.expander("View Full Node"):
-                            st.json(node)
+            for node, score in results:
+                with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} (Score: {score:.2f})"):
+                    # Display key fields
+                    st.write(f"**ID:** {node.get('id', 'N/A')}")
+                    st.write(f"**Title:** {node.get('title', 'N/A')}")
+                    st.write(f"**Similarity Score:** {score:.4f}")
+                    
+                    if 'tags' in node:
+                        st.write(f"**Tags:** {', '.join(node['tags'])}")
+                    
+                    # Show full node as JSON
+                    with st.expander("View Full Node"):
+                        st.json(node)
 
 
 def show_visualization():
@@ -836,4 +1212,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
