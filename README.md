@@ -10,6 +10,7 @@ A graph-based data management system for YAML files with embedding and querying 
 - Query data using a simple query language
 - Automatically link related nodes
 - Find similar nodes using embeddings
+- Comprehensive logging system for debugging
 
 ## Modules
 
@@ -61,6 +62,25 @@ The data handler module provides functions for loading and saving graph data:
 - `create_zip`: Function for creating a ZIP file from a folder
 - `flatten_node`: Function for flattening a node by combining text fields
 - `query_by_tag`: Function for querying a graph by tag
+
+### 6. Logger Module
+
+The logger module provides functions for setting up and using logging:
+
+- `setup_logger`: Function for setting up a logger with file and console handlers
+- `get_logger`: Function for getting a logger with configuration
+- `log_function_call`: Function for logging function calls
+- `log_function_result`: Function for logging function results
+- `log_error`: Function for logging errors
+
+### 7. Decorators Module
+
+The decorators module provides decorators for common functionality:
+
+- `@log_function`: Decorator to log function calls and results
+- `@retry`: Decorator to retry a function on failure
+- `@cache_result`: Decorator to cache function results
+- `@validate_args`: Decorator to validate function arguments
 
 ## Embedding LLMs
 
@@ -164,6 +184,7 @@ from src.models.embeddings import EmbeddingGenerator, batch_generate_embeddings
 from src.models.graph_ops import auto_link_nodes, find_similar_nodes
 from src.models.query_engine import query_graph
 from src.utils.data_handler import load_graph_from_folder, save_node_to_yaml
+from src.utils.logger import setup_logger, get_logger, log_function_call, log_function_result, log_error
 
 # Load graph data
 graph, errors = load_graph_from_folder("data")
@@ -192,3 +213,97 @@ similar_nodes = find_similar_nodes(linked_graph, "node1", similarity_threshold=0
 save_node_to_yaml(linked_graph["node1"], "data")
 ```
 
+## Viewing Logs
+
+GraphYML includes a comprehensive logging system to help with debugging and monitoring. Logs are stored in the `logs` directory by default.
+
+### Using the Logger Module
+
+```python
+from src.utils.logger import get_logger
+
+# Get a logger
+logger = get_logger("my_module")
+
+# Log messages
+logger.debug("Debug message")
+logger.info("Info message")
+logger.warning("Warning message")
+logger.error("Error message")
+logger.critical("Critical message")
+
+# Log with context
+logger.info("Processing node %s", node_id)
+logger.error("Failed to load file: %s", error)
+```
+
+### Using Decorators
+
+```python
+from src.utils.decorators import log_function, retry, cache_result
+
+# Log function calls and results
+@log_function()
+def process_node(node_id):
+    # Function code here
+    return result
+
+# Retry on failure
+@retry(max_attempts=3, delay=1.0, backoff=2.0, exceptions=(ConnectionError,))
+def fetch_data(url):
+    # Function code here
+    return data
+
+# Cache results
+@cache_result(ttl=60)  # Cache for 60 seconds
+def expensive_calculation(x, y):
+    # Function code here
+    return result
+```
+
+### Viewing Logs
+
+GraphYML includes a script to view and analyze logs:
+
+```bash
+# View all logs
+python scripts/view_logs.py
+
+# Filter by log level
+python scripts/view_logs.py --level ERROR
+
+# Filter by logger name
+python scripts/view_logs.py --logger embeddings
+
+# Filter by time range
+python scripts/view_logs.py --start-time "2023-01-01 00:00:00" --end-time "2023-01-02 00:00:00"
+
+# Filter by message pattern
+python scripts/view_logs.py --message "Error loading file"
+
+# Show only the last 10 lines
+python scripts/view_logs.py --tail 10
+
+# Follow log file (like tail -f)
+python scripts/view_logs.py --follow
+
+# Custom output format
+python scripts/view_logs.py --format "%t - %m"
+```
+
+### Log Configuration
+
+You can configure logging in the `config.json` file:
+
+```json
+{
+  "logging": {
+    "log_level": "INFO",
+    "log_dir": "logs",
+    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "console_output": true,
+    "max_bytes": 10485760,
+    "backup_count": 5
+  }
+}
+```

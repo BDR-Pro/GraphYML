@@ -1,0 +1,61 @@
+{
+  "app": {
+    "title": "GraphYML",
+    "description": "A graph-based data management system for YAML files with embedding and querying capabilities.",
+    "version": "0.1.0",
+    "author": "BDR-Pro"
+  },
+  "paths": {
+    "data_dir": "data",
+    "index_dir": "indexes",
+    "temp_dir": "temp",
+    "export_dir": "exports"
+  },
+  "embedding": {
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "all-minilm-l6-v2",
+    "openai_embedding_model": "text-embedding-3-small",
+    "st_model": "all-MiniLM-L6-v2",
+    "embedding_dimension": 384,
+    "allow_fallback": true
+  },
+  "indexing": {
+    "auto_build": true,
+    "auto_save": true,
+    "default_indexes": [
+      {
+        "name": "title_index",
+        "field": "title",
+        "type": "hash"
+      },
+      {
+        "name": "tags_index",
+        "field": "tags",
+        "type": "hash"
+      },
+      {
+        "name": "embedding_index",
+        "field": "embedding",
+        "type": "vector"
+      }
+    ]
+  },
+  "query": {
+    "default_limit": 10,
+    "similarity_threshold": 0.7,
+    "max_path_length": 5
+  },
+  "logging": {
+    "log_level": "INFO",
+    "log_dir": "logs",
+    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "console_output": true,
+    "max_bytes": 10485760,
+    "backup_count": 5
+  },
+  "schema": {
+    "required_fields": ["id", "title"],
+    "optional_fields": ["tags", "links", "genres", "embedding", "content", "description", "overview", "metadata"]
+  }
+}
+
