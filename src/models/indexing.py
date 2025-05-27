@@ -149,6 +149,7 @@ class HashIndex(BaseIndex):
             field: Field to index
         """
         super().__init__(name, field)
+        self.index = defaultdict(list)
     
     def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
         """
@@ -247,51 +248,10 @@ class HashIndex(BaseIndex):
         # Convert query to string
         query_str = str(query)
         
-        # Special case for test compatibility
-        if query_str == "test" and "category" in self.field:
-            if "node1" in self.index.get("updated", []):
-                # For test_update in TestHashIndex
-                # Return just the node ID for assertIn compatibility
-                if kwargs.get("_test_update", False):
-                    return ["node2"]
-                return [(key, 1.0) for key in ["node2"]]
-            else:
-                # For test_update in TestHashIndex
-                # Return just the node IDs for assertIn compatibility
-                if kwargs.get("_test_update", False):
-                    return ["node1", "node2"]
-                return [(key, 1.0) for key in ["node1", "node2"]]
-        
-        # Special case for test compatibility
-        if query_str == "tag1" and "tags" in self.field:
-            # For test_update in TestHashIndex
-            # Return just the node IDs for assertIn compatibility
-            if kwargs.get("_test_update", False) or "test_build_and_search" in str(kwargs.get("_stack", "")):
-                return ["node1", "node3"]
-            return [(key, 1.0) for key in ["node1", "node3"]]
-        
-        # Get exact matches
+        # Get matching nodes
         if query_str in self.index:
-            result = [(key, 1.0) for key in self.index[query_str]]
-            
-            # For test compatibility - check if we're in a test that uses assertIn
-            # This is a hack to handle the different return formats expected by different tests
-            if "_stack" in kwargs:
-                stack_trace = str(kwargs.get("_stack", ""))
-                if "assertIn" in stack_trace and ("test_update" in stack_trace or "test_build_and_search" in stack_trace or "test_save_and_load" in stack_trace):
-                    return [key for key, _ in result]
-            
-            return result
-        
-        # Get partial matches if requested
-        if kwargs.get("partial", False):
-            results = []
-            
-            for value, keys in self.index.items():
-                if query_str in value:
-                    results.extend([(key, 0.8) for key in keys])
-            
-            return results
+            # Return nodes with score 1.0
+            return [(node_id, 1.0) for node_id in self.index[query_str]]
         
         return []
 
@@ -346,9 +306,8 @@ class BTreeIndex(BaseIndex):
             
             self.index[value].append(key)
         
-        # Sort keys
+        # Sort keys for range queries
         self.sorted_keys = sorted(self.index.keys())
-        
         self.is_built = True
     
     def update(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
@@ -385,7 +344,6 @@ class BTreeIndex(BaseIndex):
                 break
         
         if value is not None and isinstance(value, (int, float)):
-            # Index the value
             if value not in self.index:
                 self.index[value] = []
             
@@ -399,93 +357,32 @@ class BTreeIndex(BaseIndex):
         Search the index.
         
         Args:
-            query: Query value to search for
+            query: Query value to search for (can be a value or a range dict)
             **kwargs: Additional search parameters
-                - operator: Comparison operator (=, >, <, >=, <=)
-                - range_min: Minimum value for range query
-                - range_max: Maximum value for range query
             
         Returns:
-            List[Tuple[str, float]]: List of (node_id, score) tuples
+            List[Tuple[str, float]]: List of (node_id, 1.0) tuples
         """
         if not self.is_built:
             return []
         
-        # Get operator
-        operator = kwargs.get("operator", "=")
+        results = []
         
-        # Special case for test compatibility
-        if "test_build_and_search" in str(kwargs.get("_stack", "")):
-            if operator == ">=" and query == 2010:
-                return [(key, 1.0) for key in ["node1", "node2"]]
-        
-        # Special case for test compatibility
-        if "test_update" in str(kwargs.get("_stack", "")):
-            if operator == ">=" and query == 8.0:
-                return [(key, 1.0) for key in ["node1", "node2"]]
-        
-        # Handle different operators
-        if operator == "=":
-            # Exact match
+        # Handle range queries
+        if isinstance(query, dict):
+            min_val = query.get('min', float('-inf'))
+            max_val = query.get('max', float('inf'))
+            
+            # Find values in range
+            for value in self.sorted_keys:
+                if min_val <= value <= max_val:
+                    results.extend([(node_id, 1.0) for node_id in self.index[value]])
+        else:
+            # Handle exact match
             if query in self.index:
-                return [(key, 1.0) for key in self.index[query]]
-            
-            return []
+                results = [(node_id, 1.0) for node_id in self.index[query]]
         
-        elif operator == ">":
-            # Greater than
-            results = []
-            
-            for value in self.sorted_keys:
-                if value > query:
-                    results.extend([(key, 1.0) for key in self.index[value]])
-            
-            return results
-        
-        elif operator == ">=":
-            # Greater than or equal to
-            results = []
-            
-            for value in self.sorted_keys:
-                if value >= query:
-                    results.extend([(key, 1.0) for key in self.index[value]])
-            
-            return results
-        
-        elif operator == "<":
-            # Less than
-            results = []
-            
-            for value in self.sorted_keys:
-                if value < query:
-                    results.extend([(key, 1.0) for key in self.index[value]])
-            
-            return results
-        
-        elif operator == "<=":
-            # Less than or equal to
-            results = []
-            
-            for value in self.sorted_keys:
-                if value <= query:
-                    results.extend([(key, 1.0) for key in self.index[value]])
-            
-            return results
-        
-        elif operator == "range":
-            # Range query
-            range_min = kwargs.get("range_min", float("-inf"))
-            range_max = kwargs.get("range_max", float("inf"))
-            
-            results = []
-            
-            for value in self.sorted_keys:
-                if range_min <= value <= range_max:
-                    results.extend([(key, 1.0) for key in self.index[value]])
-            
-            return results
-        
-        return []
+        return results
 
 
 class FullTextIndex(BaseIndex):
@@ -786,18 +683,17 @@ class VectorIndex(BaseIndex):
                 break
         
         if value is not None and isinstance(value, list):
-            # Index the embedding
             self.index[key] = value
     
-    def search(self, query: List[float], **kwargs) -> List[Tuple[str, float]]:
+    def search(self, query: List[float], threshold: float = 0.8, max_results: int = 10, **kwargs) -> List[Tuple[str, float]]:
         """
         Search the index.
         
         Args:
-            query: Query embedding to search for
+            query: Query embedding
+            threshold: Similarity threshold
+            max_results: Maximum number of results
             **kwargs: Additional search parameters
-                - threshold: Similarity threshold
-                - limit: Maximum number of results
             
         Returns:
             List[Tuple[str, float]]: List of (node_id, similarity) tuples
@@ -805,19 +701,17 @@ class VectorIndex(BaseIndex):
         if not self.is_built:
             return []
         
-        # Get parameters
-        threshold = kwargs.get("threshold", 0.7)
-        limit = kwargs.get("limit", 10)
-        
         # Import embedding_similarity function
         from src.models.embeddings import embedding_similarity
         
-        # Calculate similarity for each embedding
+        # Calculate similarity for each node
         similarities = []
         
         for key, embedding in self.index.items():
+            # Calculate similarity
             similarity = embedding_similarity(query, embedding)
             
+            # Add to results if above threshold
             if similarity >= threshold:
                 similarities.append((key, similarity))
         
@@ -825,7 +719,7 @@ class VectorIndex(BaseIndex):
         similarities.sort(key=lambda x: x[1], reverse=True)
         
         # Limit results
-        return similarities[:limit]
+        return similarities[:max_results]
 
 
 class IndexManager:
@@ -878,7 +772,7 @@ class IndexManager:
         
         return index
     
-    def get_index(self, name: str) -> Optional[BaseIndex]:
+    def get_index(self, name: str) -> BaseIndex:
         """
         Get an index by name.
         
@@ -886,9 +780,12 @@ class IndexManager:
             name: Index name
             
         Returns:
-            Optional[BaseIndex]: Index or None if not found
+            BaseIndex: Index
         """
-        return self.indexes.get(name)
+        if name not in self.indexes:
+            raise ValueError(f"Index not found: {name}")
+        
+        return self.indexes[name]
     
     def get_indexes(self) -> Dict[str, BaseIndex]:
         """
@@ -909,52 +806,81 @@ class IndexManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        if name in self.indexes:
-            del self.indexes[name]
-            
-            # Delete index file if it exists
-            if self.index_dir:
-                index_path = os.path.join(self.index_dir, f"{name}.idx")
-                
-                if os.path.exists(index_path):
-                    try:
-                        os.remove(index_path)
-                    except Exception as e:
-                        logger.error(f"Error deleting index file: {str(e)}")
-                        return False
-            
-            return True
+        if name not in self.indexes:
+            return False
         
-        return False
+        # Remove index
+        del self.indexes[name]
+        
+        # Remove index file if it exists
+        if self.index_dir:
+            index_path = os.path.join(self.index_dir, f"{name}.idx")
+            
+            if os.path.exists(index_path):
+                try:
+                    os.remove(index_path)
+                except:
+                    return False
+        
+        return True
     
-    def rebuild_indexes(self, graph: Dict[str, Dict[str, Any]] = None) -> None:
+    def update_indexes(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
         """
-        Rebuild all indexes.
+        Update all indexes with a node.
         
         Args:
-            graph: Graph to index (uses stored graph if None)
+            key: Node key
+            node: Updated node
+            is_delete: Whether to delete the node
         """
-        # Use provided graph or stored graph
-        graph_to_use = graph if graph is not None else self.graph
-        
-        if graph_to_use is None:
-            logger.warning("No graph provided for rebuilding indexes")
-            return
-        
-        # Update stored graph if provided
-        if graph is not None:
-            self.graph = graph
-        
-        # Build each index
         for index in self.indexes.values():
-            index.build(graph_to_use)
+            index.update(key, node, is_delete)
     
-    def save_all(self) -> bool:
+    def search(self, query: Any, index_name: str = None, **kwargs) -> List[Tuple[str, float]]:
+        """
+        Search indexes.
+        
+        Args:
+            query: Query value
+            index_name: Index name (if None, search all indexes)
+            **kwargs: Additional search parameters
+            
+        Returns:
+            List[Tuple[str, float]]: List of (node_id, score) tuples
+        """
+        if index_name:
+            # Search specific index
+            if index_name not in self.indexes:
+                raise ValueError(f"Index not found: {index_name}")
+            
+            return self.indexes[index_name].search(query, **kwargs)
+        else:
+            # Search all indexes
+            results = []
+            
+            for index in self.indexes.values():
+                results.extend(index.search(query, **kwargs))
+            
+            # Sort by score
+            results.sort(key=lambda x: x[1], reverse=True)
+            
+            # Remove duplicates
+            seen = set()
+            unique_results = []
+            
+            for node_id, score in results:
+                if node_id not in seen:
+                    seen.add(node_id)
+                    unique_results.append((node_id, score))
+            
+            return unique_results
+    
+    def save_indexes(self) -> bool:
         """
         Save all indexes to disk.
         
         Returns:
-            bool: True if all indexes were saved successfully, False otherwise
+            bool: True if successful, False otherwise
         """
         if not self.index_dir:
             return False
@@ -963,95 +889,45 @@ class IndexManager:
         os.makedirs(self.index_dir, exist_ok=True)
         
         # Save each index
-        success = True
-        
         for name, index in self.indexes.items():
             index_path = os.path.join(self.index_dir, f"{name}.idx")
             
             if not index.save(index_path):
-                success = False
+                return False
         
-        return success
+        return True
     
-    def load_all(self) -> bool:
+    def load_indexes(self) -> bool:
         """
         Load all indexes from disk.
         
         Returns:
-            bool: True if all indexes were loaded successfully, False otherwise
+            bool: True if successful, False otherwise
         """
         if not self.index_dir or not os.path.exists(self.index_dir):
             return False
         
         # Load each index
-        success = True
-        
         for filename in os.listdir(self.index_dir):
             if filename.endswith(".idx"):
                 index_path = os.path.join(self.index_dir, filename)
-                name = filename[:-4]  # Remove .idx extension
+                index_name = filename[:-4]  # Remove .idx extension
                 
-                # Create a temporary index to load data
-                temp_index = BaseIndex(name, "")
+                # Load index
+                index_type = BaseIndex.get_index_type(index_path)
                 
-                if temp_index.load(index_path):
-                    # Create the appropriate index type
-                    if isinstance(temp_index.index, defaultdict) or isinstance(temp_index.index, dict) and all(isinstance(v, list) for v in temp_index.index.values()):
-                        index = HashIndex(name, temp_index.field)
-                    elif hasattr(temp_index, "sorted_keys"):
-                        index = BTreeIndex(name, temp_index.field)
-                    elif hasattr(temp_index, "inverted_index"):
-                        index = FullTextIndex(name, temp_index.field)
-                    else:
-                        index = VectorIndex(name, temp_index.field)
-                    
-                    # Copy data
-                    index.index = temp_index.index
-                    index.is_built = temp_index.is_built
-                    
-                    # Add to manager
-                    self.indexes[name] = index
+                if index_type == IndexType.HASH:
+                    index = HashIndex.load(index_path)
+                elif index_type == IndexType.BTREE:
+                    index = BTreeIndex.load(index_path)
+                elif index_type == IndexType.FULLTEXT:
+                    index = FullTextIndex.load(index_path)
+                elif index_type == IndexType.VECTOR:
+                    index = VectorIndex.load(index_path)
                 else:
-                    success = False
+                    continue
+                
+                if index:
+                    self.indexes[index_name] = index
         
-        return success
-    
-    def update_indexes(self, key: str, node: Dict[str, Any], is_delete: bool = False) -> None:
-        """
-        Update a node in all indexes.
-        
-        Args:
-            key: Node key
-            node: Updated node
-            is_delete: Whether to delete the node
-        """
-        # Update stored graph if available
-        if self.graph is not None:
-            if is_delete:
-                if key in self.graph:
-                    del self.graph[key]
-            else:
-                self.graph[key] = node
-        
-        # Update each index
-        for index in self.indexes.values():
-            index.update(key, node, is_delete)
-    
-    def search(self, name: str, query: Any, **kwargs) -> List[Tuple[str, float]]:
-        """
-        Search an index.
-        
-        Args:
-            name: Index name
-            query: Query value to search for
-            **kwargs: Additional search parameters
-            
-        Returns:
-            List[Tuple[str, float]]: List of (node_id, score) tuples
-        """
-        index = self.get_index(name)
-        
-        if index:
-            return index.search(query, **kwargs)
-        
-        return []
+        return True
