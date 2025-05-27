@@ -39,20 +39,6 @@ class GraphORM:
         node, error = self.db.get_node(node_id, user)
         return node
     
-    def find_by_title(self, title: str, user) -> List[Dict[str, Any]]:
-        """
-        Find nodes by title.
-        
-        Args:
-            title: Title to search for
-            user: User making the request
-            
-        Returns:
-            List[Dict[str, Any]]: List of matching nodes
-        """
-        results = self.query_engine.execute_query(f'title = "{title}"')
-        return [self.graph[key] for key in results if key in self.graph]
-    
     def find_by_field(
         self, 
         field: str, 
@@ -77,6 +63,88 @@ class GraphORM:
             value = f'"{value}"'
         
         results = self.query_engine.execute_query(f'{field} {operator} {value}')
+        return [self.graph[key] for key in results if key in self.graph]
+    
+    def find_by_field_contains(
+        self, 
+        field: str, 
+        value: Any, 
+        user=None
+    ) -> List[Dict[str, Any]]:
+        """
+        Find nodes where a field contains a value.
+        
+        Args:
+            field: Field name (should be a list or string)
+            value: Value to check for
+            user: User making the request
+            
+        Returns:
+            List[Dict[str, Any]]: List of matching nodes
+        """
+        # Handle string values
+        if isinstance(value, str):
+            value = f'"{value}"'
+        
+        results = self.query_engine.execute_query(f'{field} contains {value}')
+        return [self.graph[key] for key in results if key in self.graph]
+    
+    def find_by_field_range(
+        self, 
+        field: str,
+        min_value: Any, 
+        max_value: Any, 
+        user=None
+    ) -> List[Dict[str, Any]]:
+        """
+        Find nodes where a field is within a range.
+        
+        Args:
+            field: Field name
+            min_value: Minimum value
+            max_value: Maximum value
+            user: User making the request
+            
+        Returns:
+            List[Dict[str, Any]]: List of matching nodes
+        """
+        results = self.query_engine.execute_query(
+            f'{field} >= {min_value} AND {field} <= {max_value}'
+        )
+        return [self.graph[key] for key in results if key in self.graph]
+    
+    def find_by_field_min(
+        self, 
+        field: str,
+        min_value: Any, 
+        user=None
+    ) -> List[Dict[str, Any]]:
+        """
+        Find nodes where a field is greater than or equal to a value.
+        
+        Args:
+            field: Field name
+            min_value: Minimum value
+            user: User making the request
+            
+        Returns:
+            List[Dict[str, Any]]: List of matching nodes
+        """
+        results = self.query_engine.execute_query(f'{field} >= {min_value}')
+        return [self.graph[key] for key in results if key in self.graph]
+    
+    def find_by_title(self, title: str, user) -> List[Dict[str, Any]]:
+        """
+        Find nodes by title.
+        
+        Args:
+            title: Title to search for
+            user: User making the request
+            
+        Returns:
+            List[Dict[str, Any]]: List of matching nodes
+        """
+        results = self.query_engine.execute_query(f'title = "{title}"')
         return [self.graph[key] for key in results if key in self.graph]
     
     def find_by_tag(self, tag: str, user=None) -> List[Dict[str, Any]]:
@@ -224,30 +292,26 @@ class GraphORM:
         # Return nodes with similarity scores
         return [(self.graph[key], score) for key, score in results if key in self.graph]
     
-    def find_by_combined_criteria(
+    def find_by_criteria(
         self,
-        genres: List[str] = None,
-        tags: List[str] = None,
-        year_range: Tuple[int, int] = None,
-        min_rating: float = None,
-        director: str = None,
-        text_search: str = None,
-        similar_to: str = None,
-        similarity_threshold: float = 0.7,
+        criteria: Dict[str, Dict[str, Any]] = None,
+        text_search: Dict[str, str] = None,
+        similarity: Dict[str, Any] = None,
         user=None
     ) -> List[Dict[str, Any]]:
         """
         Find nodes by multiple criteria.
         
         Args:
-            genres: List of genres to match
-            tags: List of tags to match
-            year_range: (min_year, max_year) tuple
-            min_rating: Minimum rating
-            director: Director name
-            text_search: Text to search for
-            similar_to: ID of node to find similar nodes to
-            similarity_threshold: Minimum similarity threshold
+            criteria: Dictionary of field criteria
+                Format: {field: {operator: value}}
+                Example: {"age": {">=": 18, "<=": 65}, "status": {"=": "active"}}
+            text_search: Dictionary of text search criteria
+                Format: {field_list: search_text}
+                Example: {["title", "description"]: "search term"}
+            similarity: Dictionary of similarity criteria
+                Format: {key: value}
+                Example: {"text": "similar text", "threshold": 0.7}
             user: User making the request
             
         Returns:
@@ -255,39 +319,21 @@ class GraphORM:
         """
         query_parts = []
         
-        # Add genre conditions
-        if genres:
-            genre_parts = []
-            for genre in genres:
-                genre_parts.append(f'genres contains "{genre}"')
-            query_parts.append("(" + " OR ".join(genre_parts) + ")")
+        # Add field criteria
+        if criteria:
+            for field, conditions in criteria.items():
+                for operator, value in conditions.items():
+                    if isinstance(value, str):
+                        value = f'"{value}"'
+                    query_parts.append(f'{field} {operator} {value}')
         
-        # Add tag conditions
-        if tags:
-            tag_parts = []
-            for tag in tags:
-                tag_parts.append(f'tags contains "{tag}"')
-            query_parts.append("(" + " OR ".join(tag_parts) + ")")
-        
-        # Add year range condition
-        if year_range:
-            min_year, max_year = year_range
-            query_parts.append(f'year >= {min_year} AND year <= {max_year}')
-        
-        # Add rating condition
-        if min_rating is not None:
-            query_parts.append(f'rating >= {min_rating}')
-        
-        # Add director condition
-        if director:
-            query_parts.append(f'director = "{director}"')
-        
-        # Add text search condition
+        # Add text search criteria
         if text_search:
-            text_parts = []
-            for field in ["title", "overview", "tagline"]:
-                text_parts.append(f'{field} contains "{text_search}"')
-            query_parts.append("(" + " OR ".join(text_parts) + ")")
+            for fields, text in text_search.items():
+                text_parts = []
+                for field in fields:
+                    text_parts.append(f'{field} contains "{text}"')
+                query_parts.append("(" + " OR ".join(text_parts) + ")")
         
         # Build and execute query
         if query_parts:
@@ -299,10 +345,12 @@ class GraphORM:
             nodes = list(self.graph.values())
         
         # Filter by similarity if requested
-        if similar_to:
+        if similarity:
             similar_results = self.find_by_similarity(
-                node_id=similar_to,
-                threshold=similarity_threshold,
+                text=similarity.get("text"),
+                node_id=similarity.get("node_id"),
+                embedding=similarity.get("embedding"),
+                threshold=similarity.get("threshold", 0.7),
                 limit=len(self.graph),
                 user=user
             )
@@ -421,6 +469,7 @@ class GraphORM:
         self,
         field: str,
         aggregation: str = "count",
+        value_field: str = None,
         user=None
     ) -> Dict[Any, Union[int, float]]:
         """
@@ -429,6 +478,7 @@ class GraphORM:
         Args:
             field: Field to group by
             aggregation: Aggregation function (count, avg, sum, min, max)
+            value_field: Field to aggregate (required for avg, sum, min, max)
             user: User making the request
             
         Returns:
@@ -442,20 +492,35 @@ class GraphORM:
                 result[value] = len(nodes)
             elif aggregation in ("avg", "sum", "min", "max"):
                 # These aggregations require a numeric field
-                # For simplicity, we'll use the "rating" field
-                ratings = [node.get("rating", 0) for node in nodes if "rating" in node]
+                if value_field is None:
+                    # Skip if no value field provided
+                    continue
                 
-                if ratings:
+                # Extract values
+                values = []
+                for node in nodes:
+                    # Handle nested fields with dot notation
+                    node_value = node
+                    for part in value_field.split('.'):
+                        if isinstance(node_value, dict) and part in node_value:
+                            node_value = node_value[part]
+                        else:
+                            node_value = None
+                            break
+                    
+                    if node_value is not None and isinstance(node_value, (int, float)):
+                        values.append(node_value)
+                
+                if values:
                     if aggregation == "avg":
-                        result[value] = sum(ratings) / len(ratings)
+                        result[value] = sum(values) / len(values)
                     elif aggregation == "sum":
-                        result[value] = sum(ratings)
+                        result[value] = sum(values)
                     elif aggregation == "min":
-                        result[value] = min(ratings)
+                        result[value] = min(values)
                     elif aggregation == "max":
-                        result[value] = max(ratings)
+                        result[value] = max(values)
                 else:
                     result[value] = 0
         
         return result
-

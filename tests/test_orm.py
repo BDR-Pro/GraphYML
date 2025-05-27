@@ -248,7 +248,94 @@ class TestORM(unittest.TestCase):
         self.assertAlmostEqual(aggregated["Christopher Nolan"], (8.8 + 8.6) / 2)
         self.assertAlmostEqual(aggregated["Lana Wachowski"], 8.7)
 
+    def test_find_by_field_contains(self):
+        """Test finding nodes where a field contains a value."""
+        # Set up mock
+        self.mock_db.query_engine.execute_query.return_value = ["node2"]
+        
+        # Find nodes
+        results = self.orm.find_by_field_contains("tags", "cyberpunk", None)
+        
+        # Check if the correct nodes were found
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], self.test_graph["node2"])
+        
+        # Check if the execute_query method was called with the correct parameters
+        self.mock_db.query_engine.execute_query.assert_called_once_with('tags contains "cyberpunk"')
+
+    def test_find_by_field_range(self):
+        """Test finding nodes by field range."""
+        # Set up mock
+        self.mock_db.query_engine.execute_query.return_value = ["node1", "node3"]
+        
+        # Find nodes
+        results = self.orm.find_by_field_range("year", 2010, 2020, None)
+        
+        # Check if the correct nodes were found
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], self.test_graph["node1"])
+        self.assertEqual(results[1], self.test_graph["node3"])
+        
+        # Check if the execute_query method was called with the correct parameters
+        self.mock_db.query_engine.execute_query.assert_called_once_with('year >= 2010 AND year <= 2020')
+
+    def test_find_by_field_min(self):
+        """Test finding nodes by minimum field value."""
+        # Set up mock
+        self.mock_db.query_engine.execute_query.return_value = ["node1"]
+        
+        # Find nodes
+        results = self.orm.find_by_field_min("rating", 8.8, None)
+        
+        # Check if the correct nodes were found
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], self.test_graph["node1"])
+        
+        # Check if the execute_query method was called with the correct parameters
+        self.mock_db.query_engine.execute_query.assert_called_once_with('rating >= 8.8')
+
+    @patch('src.models.orm.GraphORM.find_by_similarity')
+    def test_find_by_criteria(self, mock_find_by_similarity):
+        """Test finding nodes by combined criteria."""
+        # Set up mock
+        self.mock_db.query_engine.execute_query.return_value = ["node1"]
+        mock_find_by_similarity.return_value = [(self.test_graph["node1"], 0.9)]
+        
+        # Find nodes
+        results = self.orm.find_by_criteria(
+            criteria={
+                "director": {"=": "Christopher Nolan"},
+                "rating": {">=": 8.5}
+            },
+            text_search={
+                ("title", "overview"): "inception"
+            },
+            similarity={
+                "node_id": "node2",
+                "threshold": 0.7
+            },
+            user=None
+        )
+        
+        # Check if the correct nodes were found
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], self.test_graph["node1"])
+        
+        # Check if the execute_query method was called with the correct parameters
+        self.mock_db.query_engine.execute_query.assert_called_once()
+        query = self.mock_db.query_engine.execute_query.call_args[0][0]
+        self.assertIn('director = "Christopher Nolan"', query)
+        self.assertIn('rating >= 8.5', query)
+        self.assertIn('title contains "inception" OR overview contains "inception"', query)
+        
+        # Check if find_by_similarity was called with the correct parameters
+        mock_find_by_similarity.assert_called_once_with(
+            node_id="node2",
+            threshold=0.7,
+            limit=len(self.test_graph),
+            user=None
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

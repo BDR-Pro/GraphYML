@@ -116,41 +116,53 @@ results = db.query("genres contains 'Sci-Fi' AND director = 'Christopher Nolan' 
 ### ORM-Style Query Examples
 
 ```python
-# Find by field
-movies = db.orm.find_by_field("director", "Christopher Nolan", "=", user)
+# Find by field with any operator
+nodes = db.orm.find_by_field("status", "active", "=", user)
+nodes = db.orm.find_by_field("price", 100, ">", user)
 
-# Find by genre
-sci_fi_movies = db.orm.find_by_genre("Sci-Fi", user)
+# Find by field contains (for lists or strings)
+nodes = db.orm.find_by_field_contains("tags", "important", user)
+nodes = db.orm.find_by_field_contains("categories", "electronics", user)
 
-# Find by tag
-action_movies = db.orm.find_by_tag("action", user)
+# Find by field range
+nodes = db.orm.find_by_field_range("created_at", "2023-01-01", "2023-12-31", user)
+nodes = db.orm.find_by_field_range("price", 10, 50, user)
 
-# Find by year range
-recent_movies = db.orm.find_by_year_range(2010, 2023, user)
+# Find by minimum value
+nodes = db.orm.find_by_field_min("rating", 4.5, user)
 
-# Find by rating
-top_rated = db.orm.find_by_rating(8.5, user)
-
-# Find by text search
-results = db.orm.find_by_text_search("space travel", ["title", "overview"], user)
+# Find by text search across multiple fields
+nodes = db.orm.find_by_text_search("wireless headphones", ["title", "description"], user)
 
 # Find by similarity
-similar_movies, scores = db.orm.find_by_similarity(text="space adventure", threshold=0.7, user=user)
+similar_nodes = db.orm.find_by_similarity(text="wireless noise cancelling", threshold=0.7, user=user)
+similar_nodes = db.orm.find_by_similarity(node_id="product123", threshold=0.8, user=user)
 
-# Find by combined criteria
-results = db.orm.find_by_combined_criteria(
-    genres=["Sci-Fi", "Action"],
-    year_range=(2010, 2023),
-    min_rating=8.0,
-    director="Christopher Nolan",
-    similar_to="tt0816692",  # Interstellar
+# Find by complex criteria
+results = db.orm.find_by_criteria(
+    criteria={
+        "category": {"=": "Electronics"},
+        "price": {">=": 100, "<=": 500},
+        "in_stock": {"=": True}
+    },
+    text_search={
+        ("title", "description"): "wireless headphones"
+    },
+    similarity={
+        "node_id": "product123",
+        "threshold": 0.7
+    },
     user=user
 )
 
 # Group and aggregate
-by_director = db.orm.group_by_field("director", user)
-director_counts = db.orm.aggregate_by_field("director", "count", user)
-avg_ratings = db.orm.aggregate_by_field("director", "avg", user)
+by_category = db.orm.group_by_field("category", user)
+category_counts = db.orm.aggregate_by_field("category", "count", user)
+avg_prices = db.orm.aggregate_by_field("category", "avg", "price", user)
+
+# Graph operations
+connected = db.orm.find_connected_nodes("product123", max_depth=2, user=user)
+path = db.orm.find_path_between("product123", "product456", user=user)
 ```
 
 ### Transaction Examples

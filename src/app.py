@@ -649,7 +649,7 @@ def show_query_interface():
             # Query by field
             field = st.selectbox(
                 "Field",
-                ["title", "director", "category", "id"],
+                ["title", "director", "category", "id", "tags", "genres", "year", "rating"],
                 key="orm_field"
             )
             
@@ -687,28 +687,26 @@ def show_query_interface():
                             st.json(node)
         
         with orm_tabs[1]:
-            # Query by genre/tag
-            search_type = st.radio(
-                "Search Type",
-                ["Genre", "Tag"],
-                horizontal=True,
-                key="orm_genre_tag_type"
+            # Query by field contains
+            field = st.selectbox(
+                "Field",
+                ["tags", "genres", "keywords", "categories"],
+                key="orm_contains_field"
             )
             
             value = st.text_input(
-                "Genre" if search_type == "Genre" else "Tag",
-                key="orm_genre_tag_value"
+                "Value",
+                key="orm_contains_value"
             )
             
-            if st.button("Search by " + search_type):
+            if st.button("Search by Contains"):
                 if not value:
-                    st.warning(f"Please enter a {search_type.lower()}")
+                    st.warning("Please enter a value")
                     return
                 
-                if search_type == "Genre":
-                    results = st.session_state.database.orm.find_by_genre(value, user)
-                else:
-                    results = st.session_state.database.orm.find_by_tag(value, user)
+                results = st.session_state.database.orm.find_by_field_contains(
+                    field, value, user
+                )
                 
                 st.success(f"Found {len(results)} results")
                 
@@ -719,68 +717,51 @@ def show_query_interface():
                         st.write(f"**ID:** {node.get('id', 'N/A')}")
                         st.write(f"**Title:** {node.get('title', 'N/A')}")
                         
-                        if search_type == "Genre" and 'genres' in node:
-                            st.write(f"**Genres:** {', '.join(node['genres'])}")
-                        
-                        if search_type == "Tag" and 'tags' in node:
-                            st.write(f"**Tags:** {', '.join(node['tags'])}")
+                        if field in node and isinstance(node[field], list):
+                            st.write(f"**{field.capitalize()}:** {', '.join(str(x) for x in node[field])}")
                         
                         # Show full node as JSON
                         with st.expander("View Full Node"):
                             st.json(node)
         
         with orm_tabs[2]:
-            # Query by year/rating
-            search_type = st.radio(
-                "Search Type",
-                ["Year Range", "Minimum Rating"],
-                horizontal=True,
-                key="orm_year_rating_type"
+            # Query by field range
+            field = st.selectbox(
+                "Field",
+                ["year", "rating", "runtime", "budget", "revenue"],
+                key="orm_range_field"
             )
             
-            if search_type == "Year Range":
-                min_year = st.number_input("Min Year", min_value=1900, max_value=2100, value=2000)
-                max_year = st.number_input("Max Year", min_value=1900, max_value=2100, value=2023)
+            min_value = st.number_input(
+                f"Min {field.capitalize()}", 
+                value=0,
+                key=f"orm_min_{field}"
+            )
+            
+            max_value = st.number_input(
+                f"Max {field.capitalize()}", 
+                value=10000 if field == "year" else 10.0 if field == "rating" else 1000,
+                key=f"orm_max_{field}"
+            )
+            
+            if st.button("Search by Range"):
+                results = st.session_state.database.orm.find_by_field_range(
+                    field, min_value, max_value, user
+                )
                 
-                if st.button("Search by Year Range"):
-                    results = st.session_state.database.orm.find_by_year_range(
-                        min_year, max_year, user
-                    )
-                    
-                    st.success(f"Found {len(results)} results")
-                    
-                    # Display results
-                    for node in results:
-                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} ({node.get('year', 'N/A')})"):
-                            # Display key fields
-                            st.write(f"**ID:** {node.get('id', 'N/A')}")
-                            st.write(f"**Title:** {node.get('title', 'N/A')}")
-                            st.write(f"**Year:** {node.get('year', 'N/A')}")
-                            
-                            # Show full node as JSON
-                            with st.expander("View Full Node"):
-                                st.json(node)
-            else:
-                min_rating = st.slider("Minimum Rating", 0.0, 10.0, 8.0, 0.1)
+                st.success(f"Found {len(results)} results")
                 
-                if st.button("Search by Rating"):
-                    results = st.session_state.database.orm.find_by_rating(
-                        min_rating, user
-                    )
-                    
-                    st.success(f"Found {len(results)} results")
-                    
-                    # Display results
-                    for node in results:
-                        with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} ({node.get('rating', 'N/A')})"):
-                            # Display key fields
-                            st.write(f"**ID:** {node.get('id', 'N/A')}")
-                            st.write(f"**Title:** {node.get('title', 'N/A')}")
-                            st.write(f"**Rating:** {node.get('rating', 'N/A')}")
-                            
-                            # Show full node as JSON
-                            with st.expander("View Full Node"):
-                                st.json(node)
+                # Display results
+                for node in results:
+                    with st.expander(f"{node.get('title', node.get('id', 'Unknown'))} ({node.get(field, 'N/A')})"):
+                        # Display key fields
+                        st.write(f"**ID:** {node.get('id', 'N/A')}")
+                        st.write(f"**Title:** {node.get('title', 'N/A')}")
+                        st.write(f"**{field.capitalize()}:** {node.get(field, 'N/A')}")
+                        
+                        # Show full node as JSON
+                        with st.expander("View Full Node"):
+                            st.json(node)
         
         with orm_tabs[3]:
             # Query by similarity
@@ -884,98 +865,127 @@ def show_query_interface():
             st.write("### Combined Query")
             st.write("Search using multiple criteria")
             
-            col1, col2 = st.columns(2)
+            st.write("#### Field Criteria")
             
+            # Add field criteria
+            criteria = {}
+            
+            # Add field 1
+            col1, col2, col3 = st.columns(3)
             with col1:
-                genres = st.multiselect(
-                    "Genres",
-                    ["Action", "Adventure", "Comedy", "Drama", "Sci-Fi", "Thriller"],
-                    key="orm_combined_genres"
+                field1 = st.selectbox(
+                    "Field 1",
+                    ["", "title", "director", "category", "year", "rating", "tags", "genres"],
+                    key="orm_combined_field1"
                 )
-                
-                tags = st.multiselect(
-                    "Tags",
-                    ["sci-fi", "action", "comedy", "drama", "space", "time-travel"],
-                    key="orm_combined_tags"
+            with col2:
+                op1 = st.selectbox(
+                    "Operator 1",
+                    ["=", "!=", ">", ">=", "<", "<=", "contains"],
+                    key="orm_combined_op1"
                 )
-                
-                min_year = st.number_input(
-                    "Min Year", 
-                    min_value=1900, 
-                    max_value=2100, 
-                    value=2000,
-                    key="orm_combined_min_year"
-                )
-                
-                max_year = st.number_input(
-                    "Max Year", 
-                    min_value=1900, 
-                    max_value=2100, 
-                    value=2023,
-                    key="orm_combined_max_year"
+            with col3:
+                val1 = st.text_input(
+                    "Value 1",
+                    key="orm_combined_val1"
                 )
             
+            if field1 and val1:
+                if field1 not in criteria:
+                    criteria[field1] = {}
+                criteria[field1][op1] = val1
+            
+            # Add field 2
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                field2 = st.selectbox(
+                    "Field 2",
+                    ["", "title", "director", "category", "year", "rating", "tags", "genres"],
+                    key="orm_combined_field2"
+                )
             with col2:
-                min_rating = st.slider(
-                    "Minimum Rating", 
-                    0.0, 10.0, 0.0, 0.1,
-                    key="orm_combined_min_rating"
+                op2 = st.selectbox(
+                    "Operator 2",
+                    ["=", "!=", ">", ">=", "<", "<=", "contains"],
+                    key="orm_combined_op2"
+                )
+            with col3:
+                val2 = st.text_input(
+                    "Value 2",
+                    key="orm_combined_val2"
+                )
+            
+            if field2 and val2:
+                if field2 not in criteria:
+                    criteria[field2] = {}
+                criteria[field2][op2] = val2
+            
+            st.write("#### Text Search")
+            
+            # Text search
+            text_search = {}
+            
+            search_text = st.text_input(
+                "Search Text",
+                key="orm_combined_search_text"
+            )
+            
+            search_fields = st.multiselect(
+                "Search Fields",
+                ["title", "overview", "tagline", "description", "summary"],
+                ["title", "overview"],
+                key="orm_combined_search_fields"
+            )
+            
+            if search_text and search_fields:
+                text_search[tuple(search_fields)] = search_text
+            
+            st.write("#### Similarity Search")
+            
+            # Similarity search
+            similarity = {}
+            
+            similarity_type = st.radio(
+                "Similarity Type",
+                ["None", "Text", "Node ID"],
+                key="orm_combined_similarity_type"
+            )
+            
+            if similarity_type == "Text":
+                similarity_text = st.text_input(
+                    "Text",
+                    key="orm_combined_similarity_text"
                 )
                 
-                director = st.text_input(
-                    "Director",
-                    key="orm_combined_director"
-                )
-                
-                text_search = st.text_input(
-                    "Text Search",
-                    key="orm_combined_text_search"
-                )
-                
+                if similarity_text:
+                    similarity["text"] = similarity_text
+            
+            elif similarity_type == "Node ID":
                 # Get all node IDs
-                node_ids = [""] + list(st.session_state.database.graph.keys())
+                node_ids = list(st.session_state.database.graph.keys())
                 
-                similar_to = st.selectbox(
-                    "Similar To (Node ID)",
+                similarity_node = st.selectbox(
+                    "Node ID",
                     node_ids,
-                    key="orm_combined_similar_to"
+                    key="orm_combined_similarity_node"
                 )
                 
-                similarity_threshold = st.slider(
+                if similarity_node:
+                    similarity["node_id"] = similarity_node
+            
+            if similarity_type != "None":
+                similarity["threshold"] = st.slider(
                     "Similarity Threshold", 
                     0.0, 1.0, 0.7, 0.05,
                     key="orm_combined_similarity_threshold"
                 )
             
             if st.button("Execute Combined Query"):
-                # Prepare parameters
-                params = {}
-                
-                if genres:
-                    params["genres"] = genres
-                
-                if tags:
-                    params["tags"] = tags
-                
-                if min_year > 1900 or max_year < 2023:
-                    params["year_range"] = (min_year, max_year)
-                
-                if min_rating > 0:
-                    params["min_rating"] = min_rating
-                
-                if director:
-                    params["director"] = director
-                
-                if text_search:
-                    params["text_search"] = text_search
-                
-                if similar_to:
-                    params["similar_to"] = similar_to
-                    params["similarity_threshold"] = similarity_threshold
-                
                 # Execute query
-                results = st.session_state.database.orm.find_by_combined_criteria(
-                    **params,
+                results = st.session_state.database.orm.find_by_criteria(
+                    criteria=criteria if criteria else None,
+                    text_search=text_search if text_search else None,
+                    similarity=similarity if similarity and similarity_type != "None" else None,
                     user=user
                 )
                 
@@ -988,20 +998,15 @@ def show_query_interface():
                         st.write(f"**ID:** {node.get('id', 'N/A')}")
                         st.write(f"**Title:** {node.get('title', 'N/A')}")
                         
-                        if 'genres' in node:
-                            st.write(f"**Genres:** {', '.join(node['genres'])}")
+                        # Show common fields if they exist
+                        for field in ["year", "rating", "director", "category"]:
+                            if field in node:
+                                st.write(f"**{field.capitalize()}:** {node[field]}")
                         
-                        if 'tags' in node:
-                            st.write(f"**Tags:** {', '.join(node['tags'])}")
-                        
-                        if 'year' in node:
-                            st.write(f"**Year:** {node['year']}")
-                        
-                        if 'rating' in node:
-                            st.write(f"**Rating:** {node['rating']}")
-                        
-                        if 'director' in node:
-                            st.write(f"**Director:** {node['director']}")
+                        # Show list fields if they exist
+                        for field in ["tags", "genres"]:
+                            if field in node and isinstance(node[field], list):
+                                st.write(f"**{field.capitalize()}:** {', '.join(str(x) for x in node[field])}")
                         
                         # Show full node as JSON
                         with st.expander("View Full Node"):
