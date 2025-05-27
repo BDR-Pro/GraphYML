@@ -833,15 +833,17 @@ class IndexManager:
     Manager for multiple indexes.
     """
     
-    def __init__(self, index_dir: str = None):
+    def __init__(self, graph: Dict[str, Dict[str, Any]] = None, index_dir: str = None):
         """
         Initialize the index manager.
         
         Args:
+            graph: Graph to index
             index_dir: Directory to store indexes
         """
         self.indexes = {}
         self.index_dir = index_dir
+        self.graph = graph
     
     def create_index(self, name: str, field: str, index_type: IndexType) -> BaseIndex:
         """
@@ -869,6 +871,10 @@ class IndexManager:
         
         # Add index to manager
         self.indexes[name] = index
+        
+        # Build index if graph is available
+        if self.graph:
+            index.build(self.graph)
         
         return index
     
@@ -921,15 +927,27 @@ class IndexManager:
         
         return False
     
-    def build_all(self, graph: Dict[str, Dict[str, Any]]) -> None:
+    def rebuild_indexes(self, graph: Dict[str, Dict[str, Any]] = None) -> None:
         """
-        Build all indexes.
+        Rebuild all indexes.
         
         Args:
-            graph: Graph to index
+            graph: Graph to index (uses stored graph if None)
         """
+        # Use provided graph or stored graph
+        graph_to_use = graph if graph is not None else self.graph
+        
+        if graph_to_use is None:
+            logger.warning("No graph provided for rebuilding indexes")
+            return
+        
+        # Update stored graph if provided
+        if graph is not None:
+            self.graph = graph
+        
+        # Build each index
         for index in self.indexes.values():
-            index.build(graph)
+            index.build(graph_to_use)
     
     def save_all(self) -> bool:
         """
@@ -1007,6 +1025,15 @@ class IndexManager:
             node: Updated node
             is_delete: Whether to delete the node
         """
+        # Update stored graph if available
+        if self.graph is not None:
+            if is_delete:
+                if key in self.graph:
+                    del self.graph[key]
+            else:
+                self.graph[key] = node
+        
+        # Update each index
         for index in self.indexes.values():
             index.update(key, node, is_delete)
     
@@ -1028,4 +1055,3 @@ class IndexManager:
             return index.search(query, **kwargs)
         
         return []
-
