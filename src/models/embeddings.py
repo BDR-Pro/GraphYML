@@ -86,7 +86,7 @@ class EmbeddingGenerator:
                 return None, error
         except Exception as e:
             # Return error
-            error = f"Ollama API error: {str(e)}"
+            error = f"Error generating Ollama embedding: {str(e)}"
             logger.error(error)
             return None, error
     
@@ -260,4 +260,3 @@ def batch_generate_embeddings(
             errors.append(f"Error generating embedding for {key}: {error}")
     
     return updated_graph, errors
-
