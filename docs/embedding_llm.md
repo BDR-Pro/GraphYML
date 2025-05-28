@@ -1,191 +1,178 @@
-# Embedding LLM in GraphYML
+# Embedding LLMs in GraphYML
 
-This document provides an overview of how to integrate Large Language Models (LLMs) with the GraphYML system, particularly focusing on embedding capabilities.
+This document provides an overview of how Large Language Models (LLMs) are used for embeddings in GraphYML.
 
-## Introduction
+## Introduction to Embeddings
 
-GraphYML's modular indexing system provides a powerful foundation for integrating LLM capabilities, especially through the `VectorIndex` component. This integration enables semantic search, content recommendation, and other advanced features that leverage the power of embeddings.
+Embeddings are numerical representations of text that capture semantic meaning. In GraphYML, we use embeddings to:
 
-## Embedding Models
+1. Enable semantic search across graph nodes
+2. Cluster similar nodes together
+3. Find relationships between nodes based on content similarity
+4. Support pathfinding with semantic awareness
 
-### Supported Models
+## Embedding Architecture
 
-GraphYML can work with various embedding models:
+GraphYML supports multiple embedding providers:
 
-1. **OpenAI Embeddings**
-   - Models like `text-embedding-ada-002` or `text-embedding-3-small`
-   - High-quality embeddings with 1536 dimensions (Ada) or 1536/3072 dimensions (embedding-3)
-   - Requires API key and network access
+### 1. Local Embedding Service
 
-2. **Sentence Transformers**
-   - Open-source models like `all-MiniLM-L6-v2` or `all-mpnet-base-v2`
-   - Can run locally without API dependencies
-   - Various dimensions depending on the model (384 for MiniLM, 768 for MPNet)
+The local embedding service uses Sentence Transformers to generate embeddings. This is provided through a FastAPI service in `src/embedding_service.py`.
 
-3. **Custom Embedding Models**
-   - Any model that produces vector representations of text
-   - Must implement the expected interface for the embedding function
+Key features:
+- Uses Hugging Face's Sentence Transformers library
+- Default model: `all-MiniLM-L6-v2` (384 dimensions)
+- Exposed as a REST API
+- Containerized for easy deployment
 
-## Integration with VectorIndex
+### 2. Ollama Integration
 
-The `VectorIndex` class in GraphYML is designed to work with embeddings. Here's how to use it:
+GraphYML can connect to [Ollama](https://ollama.ai/) for embedding generation:
 
-```python
-from src.models.modular import VectorIndex, IndexManager, IndexType
-from src.models.embeddings import get_embedding
+- Default endpoint: `http://localhost:11434/api/embeddings`
+- Default model: `all-minilm-l6-v2`
+- Configurable through the application settings
 
-# Create an index manager
-manager = IndexManager()
+### 3. Fallback Simple Embeddings
 
-# Create a vector index for the "content" field
-vector_index = manager.create_index("content_vectors", "content", IndexType.VECTOR)
+If external services are unavailable, GraphYML includes a simple fallback embedding generator that:
+- Creates basic character-based embeddings
+- Normalizes and pads to the expected dimension
+- Provides degraded but functional similarity matching
 
-# Build the index with your graph data
-vector_index.build(graph_data)
+## Implementation Details
 
-# Search for semantically similar content
-query_embedding = get_embedding("What is knowledge management?")
-results = vector_index.search(query_embedding, threshold=0.7)
-```
+### EmbeddingGenerator Class
 
-## Embedding Generation
-
-### Embedding at Index Time
-
-For optimal performance, embeddings should be generated during the initial data processing and stored as part of the node data:
+The main embedding functionality is implemented in `src/models/embeddings.py` through the `EmbeddingGenerator` class:
 
 ```python
-from src.models.embeddings import get_embedding
-
-# Process nodes and add embeddings
-for node_id, node_data in graph.items():
-    if "content" in node_data:
-        node_data["embedding"] = get_embedding(node_data["content"])
+class EmbeddingGenerator:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        # Initialize with configuration
+        
+    def generate_embedding(self, text: str) -> Tuple[List[float], Optional[str]]:
+        # Generate embedding with error handling
+        
+    def _generate_ollama_embedding(self, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
+        # Use Ollama API
+        
+    def _generate_fallback_embedding(self, text: str) -> Tuple[List[float], str]:
+        # Generate simple fallback embedding
+        
+    def batch_generate(self, texts: List[str]) -> List[Tuple[List[float], Optional[str]]]:
+        # Process multiple texts
 ```
 
-### On-the-fly Embedding
+### Embedding Similarity
 
-For dynamic queries, embeddings can be generated at search time:
+Similarity between embeddings is calculated using cosine similarity:
 
 ```python
-from src.models.embeddings import get_embedding
-
-# Generate embedding for search query
-query = "How to implement knowledge graphs?"
-query_embedding = get_embedding(query)
-
-# Search using the embedding
-results = vector_index.search(query_embedding)
+def embedding_similarity(embedding1: List[float], embedding2: List[float]) -> float:
+    # Calculate cosine similarity between embeddings
 ```
 
-## Advanced Features
+## Docker Setup
 
-### Hybrid Search
+GraphYML includes a dedicated Dockerfile for the embedding service:
 
-Combine vector search with traditional search methods for better results:
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.embedding.txt .
+RUN pip install --no-cache-dir -r requirements.embedding.txt
+
+COPY src/embedding_service.py .
+
+ENV MODEL_NAME="all-MiniLM-L6-v2"
+ENV PORT=8000
+
+EXPOSE 8000
+
+CMD ["python", "embedding_service.py"]
+```
+
+This service can be run independently or as part of the docker-compose setup.
+
+## Configuration
+
+Embedding settings can be configured through the application's configuration file:
+
+```json
+{
+  "embedding": {
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "all-minilm-l6-v2",
+    "openai_embedding_model": "text-embedding-3-small",
+    "st_model": "all-MiniLM-L6-v2",
+    "embedding_dimension": 384,
+    "allow_fallback": true
+  }
+}
+```
+
+## Adding Custom Embedding Providers
+
+To add a new embedding provider:
+
+1. Create a new method in the `EmbeddingGenerator` class
+2. Update the `generate_embedding` method to try your new provider
+3. Add appropriate configuration options
+
+Example for adding OpenAI embeddings:
 
 ```python
-# Get results from fulltext search
-fulltext_results = fulltext_index.search(query)
-
-# Get results from vector search
-vector_results = vector_index.search(get_embedding(query))
-
-# Combine and rank results
-combined_results = combine_search_results(fulltext_results, vector_results)
+def _generate_openai_embedding(self, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
+    """
+    Generate an embedding using OpenAI API.
+    
+    Args:
+        text: Text to generate embedding for
+        
+    Returns:
+        Tuple[Optional[List[float]], Optional[str]]: Embedding and error message (if any)
+    """
+    try:
+        import openai
+        
+        # Set API key
+        openai.api_key = self.config.get("openai_api_key")
+        
+        # Make API request
+        response = openai.Embedding.create(
+            input=text,
+            model=self.config.get("openai_embedding_model", "text-embedding-3-small")
+        )
+        
+        # Return embedding
+        return response["data"][0]["embedding"], None
+    except Exception as e:
+        # Return error
+        error = f"Error generating OpenAI embedding: {str(e)}"
+        logger.error(error)
+        return None, error
 ```
 
-### Chunking for Long Documents
+## Best Practices
 
-For long documents, consider chunking the text before embedding:
+When working with embeddings in GraphYML:
 
-```python
-def chunk_text(text, chunk_size=1000, overlap=100):
-    """Split text into overlapping chunks."""
-    chunks = []
-    for i in range(0, len(text), chunk_size - overlap):
-        chunk = text[i:i + chunk_size]
-        if len(chunk) >= chunk_size / 2:  # Only keep chunks of reasonable size
-            chunks.append(chunk)
-    return chunks
+1. **Text Preparation**: Clean and normalize text before generating embeddings
+2. **Caching**: Store embeddings to avoid regenerating them for the same content
+3. **Dimensionality**: Be consistent with embedding dimensions across your application
+4. **Fallbacks**: Always implement fallback mechanisms for when services are unavailable
+5. **Batching**: Use batch processing for multiple embeddings when possible
 
-# Process nodes with chunking
-for node_id, node_data in graph.items():
-    if "content" in node_data:
-        chunks = chunk_text(node_data["content"])
-        node_data["chunks"] = chunks
-        node_data["chunk_embeddings"] = [get_embedding(chunk) for chunk in chunks]
-```
+## Future Improvements
 
-## Performance Considerations
+Planned enhancements for embedding functionality:
 
-1. **Embedding Dimensionality**: Higher dimensions provide more expressive embeddings but require more storage and computation time.
-
-2. **Batch Processing**: Generate embeddings in batches when possible to improve throughput.
-
-3. **Caching**: Consider caching embeddings for frequently accessed content.
-
-4. **Quantization**: For large-scale deployments, consider quantizing embeddings to reduce storage requirements.
-
-5. **Approximate Nearest Neighbors**: For large vector collections, use approximate nearest neighbor algorithms like HNSW or FAISS.
-
-## Implementation Example
-
-Here's a complete example of implementing embedding-based search:
-
-```python
-from src.models.modular import IndexManager, IndexType
-from src.models.embeddings import get_embedding
-
-# Initialize index manager
-manager = IndexManager(index_dir="./indexes")
-
-# Create indexes
-vector_index = manager.create_index("content_vectors", "embedding", IndexType.VECTOR)
-fulltext_index = manager.create_index("content_text", "content", IndexType.FULLTEXT)
-
-# Process graph data with embeddings
-processed_graph = {}
-for node_id, node_data in original_graph.items():
-    processed_node = node_data.copy()
-    if "content" in node_data:
-        processed_node["embedding"] = get_embedding(node_data["content"])
-    processed_graph[node_id] = processed_node
-
-# Build indexes
-vector_index.build(processed_graph)
-fulltext_index.build(processed_graph)
-
-# Save indexes for future use
-manager.save_indexes()
-
-# Search example
-query = "How to implement knowledge graphs?"
-query_embedding = get_embedding(query)
-
-# Vector search
-vector_results = vector_index.search(query_embedding, threshold=0.7)
-
-# Text search
-text_results = fulltext_index.search(query)
-
-# Combine results (simple approach)
-combined_results = list(set([r[0] for r in vector_results] + [r[0] for r in text_results]))
-```
-
-## Future Enhancements
-
-1. **Fine-tuning**: Support for fine-tuning embedding models on domain-specific data.
-
-2. **Multi-modal Embeddings**: Extend to support embeddings for images, audio, and other data types.
-
-3. **Embedding Visualization**: Tools for visualizing embedding spaces to understand relationships.
-
-4. **Incremental Updates**: Optimize the update process for large embedding collections.
-
-5. **Distributed Embedding**: Support for distributed embedding generation and storage for large-scale applications.
-
-## Conclusion
-
-Integrating LLM embeddings with GraphYML's modular indexing system provides powerful semantic search capabilities. The `VectorIndex` component makes it straightforward to leverage these embeddings within the existing architecture, enabling advanced knowledge management features.
+1. Support for more embedding models and providers
+2. Improved caching and persistence of embeddings
+3. Fine-tuning capabilities for domain-specific embeddings
+4. Hybrid search combining embedding similarity with keyword matching
+5. Visualization tools for exploring embedding spaces
 
