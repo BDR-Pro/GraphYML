@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional, Set, Tuple, Union
 import os
 import json
 from enum import Enum
+import re
 
 from .base_index import BaseIndex
 from .hash_index import HashIndex
@@ -47,14 +48,32 @@ class IndexManager:
             BaseIndex: Created index
             
         Raises:
-            ValueError: If index type is invalid
+            ValueError: If index type is invalid or name is invalid
         """
+        # Validate name
+        if not name or not isinstance(name, str):
+            raise ValueError(f"Invalid index name: {name}. Name must be a non-empty string.")
+        
+        # Check if name contains only valid characters
+        if not re.match(r'^[a-zA-Z0-9_]+$', name):
+            raise ValueError(f"Invalid index name: {name}. Name must contain only letters, numbers, and underscores.")
+        
+        # Check if index already exists
+        if name in self.indexes:
+            raise ValueError(f"Index already exists: {name}")
+        
         # Convert string to enum
         if isinstance(index_type, str):
             try:
                 index_type = IndexType(index_type)
             except ValueError:
-                raise ValueError(f"Invalid index type: {index_type}")
+                valid_types = [t.value for t in IndexType]
+                raise ValueError(f"Invalid index type: {index_type}. Valid types are: {valid_types}")
+        
+        # Validate index_type is an IndexType
+        if not isinstance(index_type, IndexType):
+            valid_types = [t.value for t in IndexType]
+            raise ValueError(f"Invalid index type: {index_type}. Valid types are: {valid_types}")
         
         # Create the index
         if index_type == IndexType.HASH:
@@ -66,6 +85,7 @@ class IndexManager:
         elif index_type == IndexType.VECTOR:
             index = VectorIndex(name, field)
         else:
+            # This should never happen due to the validation above
             raise ValueError(f"Invalid index type: {index_type}")
         
         # Add to manager
@@ -86,6 +106,9 @@ class IndexManager:
         Raises:
             ValueError: If index not found
         """
+        if not name or not isinstance(name, str):
+            raise ValueError(f"Invalid index name: {name}. Name must be a non-empty string.")
+        
         if name not in self.indexes:
             raise ValueError(f"Index not found: {name}")
         
@@ -101,6 +124,9 @@ class IndexManager:
         Raises:
             ValueError: If index not found
         """
+        if not name or not isinstance(name, str):
+            raise ValueError(f"Invalid index name: {name}. Name must be a non-empty string.")
+        
         if name not in self.indexes:
             raise ValueError(f"Index not found: {name}")
         
@@ -140,6 +166,9 @@ class IndexManager:
         Returns:
             List of search results
         """
+        if not name or not isinstance(name, str):
+            return []
+        
         if name not in self.indexes:
             return []
         
@@ -189,23 +218,28 @@ class IndexManager:
                 
                 # Load metadata
                 if os.path.exists(metadata_path):
-                    with open(metadata_path, 'r') as f:
-                        metadata = json.load(f)
-                        
-                        # Create the appropriate index type
-                        index_type = metadata.get("type", "hash")
-                        field = metadata.get("field", "")
-                        
-                        try:
-                            index = self.create_index(name, field, index_type)
+                    try:
+                        with open(metadata_path, 'r') as f:
+                            metadata = json.load(f)
                             
-                            # Load index
-                            if not index.load(index_path):
+                            # Create the appropriate index type
+                            index_type = metadata.get("type", "hash")
+                            field = metadata.get("field", "")
+                            
+                            try:
+                                index = self.create_index(name, field, index_type)
+                                
+                                # Load index
+                                if not index.load(index_path):
+                                    success = False
+                            except ValueError as e:
+                                print(f"Error loading index {name}: {e}")
                                 success = False
-                        except ValueError:
-                            success = False
+                    except (json.JSONDecodeError, IOError) as e:
+                        print(f"Error loading index metadata {metadata_path}: {e}")
+                        success = False
                 else:
+                    print(f"Metadata file not found: {metadata_path}")
                     success = False
         
         return success
-
