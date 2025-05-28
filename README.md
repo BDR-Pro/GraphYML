@@ -1,6 +1,6 @@
-# GraphYML
+# GraphYML with Dash
 
-A graph-based data management system for YAML files with embedding and querying capabilities.
+A graph-based data management system for YAML files with embedding and querying capabilities, now with a Dash web interface.
 
 ## Features
 
@@ -11,6 +11,9 @@ A graph-based data management system for YAML files with embedding and querying 
 - Automatically link related nodes
 - Find similar nodes using embeddings
 - Comprehensive logging system for debugging
+- Web interface for managing nodes and relationships
+- User authentication and permission management
+- Backup and restore functionality
 
 ## Modules
 
@@ -63,24 +66,75 @@ The data handler module provides functions for loading and saving graph data:
 - `flatten_node`: Function for flattening a node by combining text fields
 - `query_by_tag`: Function for querying a graph by tag
 
-### 6. Logger Module
+## Installation
 
-The logger module provides functions for setting up and using logging:
+### Prerequisites
 
-- `setup_logger`: Function for setting up a logger with file and console handlers
-- `get_logger`: Function for getting a logger with configuration
-- `log_function_call`: Function for logging function calls
-- `log_function_result`: Function for logging function results
-- `log_error`: Function for logging errors
+- Python 3.9 or higher
+- Docker and Docker Compose (optional, for containerized deployment)
 
-### 7. Decorators Module
+### Option 1: Local Installation
 
-The decorators module provides decorators for common functionality:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/GraphYML.git
+   cd GraphYML
+   ```
 
-- `@log_function`: Decorator to log function calls and results
-- `@retry`: Decorator to retry a function on failure
-- `@cache_result`: Decorator to cache function results
-- `@validate_args`: Decorator to validate function arguments
+2. Install dependencies:
+   ```bash
+   pip install -r requirements_dash.txt
+   ```
+
+3. Run the application:
+   ```bash
+   python run_dash_app.py
+   ```
+
+4. Open your browser and navigate to `http://localhost:8050`
+
+### Option 2: Docker Deployment
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/GraphYML.git
+   cd GraphYML
+   ```
+
+2. Build and run with Docker Compose:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. Open your browser and navigate to `http://localhost:8050`
+
+## Usage
+
+### Authentication
+
+- Default admin credentials: username `admin`, password `admin`
+- Create new users through the User Management interface
+
+### Managing Nodes
+
+1. Navigate to the Node Editor to edit existing nodes
+2. Use the Create Node interface to add new nodes
+3. Link nodes by adding references in the node content
+
+### Querying
+
+1. Use the Query Interface to search for nodes
+2. Perform text search, criteria-based search, or similarity search
+
+### Visualization
+
+1. Navigate to the Visualization tab
+2. Choose between clustering or interactive network visualization
+
+### Backup and Restore
+
+1. Navigate to the Management tab
+2. Use the Backup & Restore interface to create or restore backups
 
 ## Embedding LLMs
 
@@ -176,134 +230,23 @@ similar_nodes = find_similar_nodes(
 )
 ```
 
-## Usage Example
+## Development
 
-```python
-from src.models.indexing import IndexType, IndexManager
-from src.models.embeddings import EmbeddingGenerator, batch_generate_embeddings
-from src.models.graph_ops import auto_link_nodes, find_similar_nodes
-from src.models.query_engine import query_graph
-from src.utils.data_handler import load_graph_from_folder, save_node_to_yaml
-from src.utils.logger import setup_logger, get_logger, log_function_call, log_function_result, log_error
+### Project Structure
 
-# Load graph data
-graph, errors = load_graph_from_folder("data")
+- `src/dash_app.py`: Main Dash application
+- `src/models/`: Core data models
+- `src/visualization/`: Graph visualization utilities
+- `src/config/`: Configuration management
+- `src/utils/`: Utility functions
 
-# Generate embeddings
-embedding_generator = EmbeddingGenerator()
-graph, errors = batch_generate_embeddings(graph, embedding_generator)
-
-# Create indexes
-index_manager = IndexManager("indexes")
-index_manager.create_index("title_index", "title", IndexType.HASH)
-index_manager.create_index("tags_index", "tags", IndexType.HASH)
-index_manager.create_index("embedding_index", "embedding", IndexType.VECTOR)
-index_manager.build_all(graph)
-
-# Auto-link nodes
-linked_graph = auto_link_nodes(graph)
-
-# Query graph
-results = query_graph(linked_graph, "title = 'Test Node' AND tags contains 'test'")
-
-# Find similar nodes
-similar_nodes = find_similar_nodes(linked_graph, "node1", similarity_threshold=0.7)
-
-# Save node
-save_node_to_yaml(linked_graph["node1"], "data")
-```
-
-## Viewing Logs
-
-GraphYML includes a comprehensive logging system to help with debugging and monitoring. Logs are stored in the `logs` directory by default.
-
-### Using the Logger Module
-
-```python
-from src.utils.logger import get_logger
-
-# Get a logger
-logger = get_logger("my_module")
-
-# Log messages
-logger.debug("Debug message")
-logger.info("Info message")
-logger.warning("Warning message")
-logger.error("Error message")
-logger.critical("Critical message")
-
-# Log with context
-logger.info("Processing node %s", node_id)
-logger.error("Failed to load file: %s", error)
-```
-
-### Using Decorators
-
-```python
-from src.utils.decorators import log_function, retry, cache_result
-
-# Log function calls and results
-@log_function()
-def process_node(node_id):
-    # Function code here
-    return result
-
-# Retry on failure
-@retry(max_attempts=3, delay=1.0, backoff=2.0, exceptions=(ConnectionError,))
-def fetch_data(url):
-    # Function code here
-    return data
-
-# Cache results
-@cache_result(ttl=60)  # Cache for 60 seconds
-def expensive_calculation(x, y):
-    # Function code here
-    return result
-```
-
-### Viewing Logs
-
-GraphYML includes a script to view and analyze logs:
+### Running Tests
 
 ```bash
-# View all logs
-python scripts/view_logs.py
-
-# Filter by log level
-python scripts/view_logs.py --level ERROR
-
-# Filter by logger name
-python scripts/view_logs.py --logger embeddings
-
-# Filter by time range
-python scripts/view_logs.py --start-time "2023-01-01 00:00:00" --end-time "2023-01-02 00:00:00"
-
-# Filter by message pattern
-python scripts/view_logs.py --message "Error loading file"
-
-# Show only the last 10 lines
-python scripts/view_logs.py --tail 10
-
-# Follow log file (like tail -f)
-python scripts/view_logs.py --follow
-
-# Custom output format
-python scripts/view_logs.py --format "%t - %m"
+pytest
 ```
 
-### Log Configuration
+## License
 
-You can configure logging in the `config.json` file:
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-```json
-{
-  "logging": {
-    "log_level": "INFO",
-    "log_dir": "logs",
-    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    "console_output": true,
-    "max_bytes": 10485760,
-    "backup_count": 5
-  }
-}
-```

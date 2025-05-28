@@ -1,15 +1,16 @@
 version: '3.8'
 
 services:
-  # Main GraphYML application
-  graphyml:
+  # Main GraphYML application with Dash
+  dash-app:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dash
     ports:
-      - "8501:8501"
+      - "8050:8050"
     volumes:
       - ./saved_yamls:/app/saved_yamls
+      - ./backups:/app/backups
       - ./graph_config.json:/app/graph_config.json
     environment:
       # Choose one of the embedding providers:
@@ -21,10 +22,6 @@ services:
       - EMBEDDING_SERVICE=http://embedding-service:8000/api/embeddings
       # Fallback provider if service is unavailable
       - FALLBACK_EMBEDDING_PROVIDER=sentence_transformers
-      - STREAMLIT_SERVER_PORT=8501
-      - STREAMLIT_SERVER_HEADLESS=true
-      # Ensure cerberus is installed
-      - PIP_EXTRA_INDEX_URL=https://pypi.org/simple
     networks:
       - graphyml-network
     restart: unless-stopped
@@ -84,3 +81,4 @@ networks:
 volumes:
   embedding-cache:
   ollama-models:
+

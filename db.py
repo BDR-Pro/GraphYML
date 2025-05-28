@@ -1,4 +1,5 @@
-# Streamlit App: Refactored YAML Graph DB
+# Database module for GraphYML.
+# Handles loading, saving, and manipulating YAML files.
 """
 A refactored Streamlit app that allows:
 - Uploading and browsing YAML graph nodes
@@ -19,6 +20,14 @@ import zipfile
 import os
 import json
 import tempfile
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import networkx as nx
@@ -39,7 +48,7 @@ def load_config():
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            print(f"Error loading config: {e}")
+            logger.error(f"Error loading config: {e}")
             # Return default config on error
             return {
                 "save_path": "saved_yamls",
@@ -49,7 +58,7 @@ def load_config():
             }
     elif os.path.exists(CONFIG_PATH) and not os.path.isfile(CONFIG_PATH):
         # If it exists but is not a file (e.g., it's a directory), use defaults
-        print(f"Warning: {CONFIG_PATH} exists but is not a file. Using default configuration.")
+        logger.warning(f"Warning: {CONFIG_PATH} exists but is not a file. Using default configuration.")
         return {
             "save_path": "saved_yamls",
             "ollama_url": "http://localhost:11434/api/embeddings",
@@ -73,10 +82,10 @@ def save_config(config):
             import shutil
             shutil.rmtree(CONFIG_PATH)
         except (IOError, OSError) as e:
-            print(f"Error removing directory {CONFIG_PATH}: {e}")
+            logger.error(f"Error removing directory {CONFIG_PATH}: {e}")
             # Try an alternative path
             alt_config_path = "graph_config_new.json"
-            print(f"Using alternative config path: {alt_config_path}")
+            logger.info(f"Using alternative config path: {alt_config_path}")
             with open(alt_config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
             return
@@ -85,17 +94,174 @@ def save_config(config):
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
     except (IOError, TypeError) as e:
-        print(f"Error saving config: {e}")
+        logger.error(f"Error saving config: {e}")
 
 
 def create_zip(folder):
-    """Compress all YAML files in a folder into a zip archive."""
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        for file in Path(folder).glob("*.yaml"):
-            zipf.write(file, arcname=file.name)
-    zip_buffer.seek(0)
-    return zip_buffer
+    """Create a zip file of a folder."""
+    folder_path = Path(folder)
+    zip_path = folder_path.with_suffix('.zip')
+    
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for file in folder_path.glob('**/*'):
+            if file.is_file():
+                zipf.write(file, file.relative_to(folder_path))
+    
+    return zip_path
+
+
+def extract_zip(zip_path, extract_to):
+    """Extract a zip file to a folder."""
+    with zipfile.ZipFile(zip_path, 'r') as zipf:
+        zipf.extractall(extract_to)
+
+
+def load_yaml_files(folder):
+    """Load all YAML files from a folder."""
+    folder_path = Path(folder)
+    yaml_files = {}
+    
+    if not folder_path.exists():
+        folder_path.mkdir(parents=True, exist_ok=True)
+        return yaml_files
+    
+    for file in folder_path.glob('*.yaml'):
+        try:
+            with open(file, 'r', encoding='utf-8') as f:
+                yaml_content = yaml.safe_load(f)
+                if yaml_content:
+                    yaml_files[file.stem] = yaml_content
+        except Exception as e:
+            logger.error(f"Error loading {file}: {e}")
+    
+    return yaml_files
+
+
+def save_yaml_file(folder, filename, content):
+    """Save content to a YAML file."""
+    folder_path = Path(folder)
+    folder_path.mkdir(parents=True, exist_ok=True)
+    
+    file_path = folder_path / f"{filename}.yaml"
+    
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            yaml.dump(content, f, sort_keys=False, default_flow_style=False)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving {file_path}: {e}")
+        return False
+
+
+def delete_yaml_file(folder, filename):
+    """Delete a YAML file."""
+    file_path = Path(folder) / f"{filename}.yaml"
+    
+    if file_path.exists():
+        try:
+            file_path.unlink()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting {file_path}: {e}")
+            return False
+    
+    return False
+
+
+def create_backup(folder, backup_name=None):
+    """Create a backup of the YAML files."""
+    folder_path = Path(folder)
+    
+    if not folder_path.exists():
+        logger.warning(f"Folder {folder} does not exist. Nothing to backup.")
+        return None
+    
+    # Create backup folder if it doesn't exist
+    backup_folder = Path("backups")
+    backup_folder.mkdir(exist_ok=True)
+    
+    # Create timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create backup name
+    if backup_name:
+        backup_name = f"{backup_name}_{timestamp}"
+    else:
+        backup_name = f"backup_{timestamp}"
+    
+    # Create backup path
+    backup_path = backup_folder / backup_name
+    
+    # Copy files to backup folder
+    try:
+        shutil.copytree(folder_path, backup_path)
+        
+        # Create zip file
+        zip_path = create_zip(backup_path)
+        
+        # Remove the temporary folder
+        shutil.rmtree(backup_path)
+        
+        return zip_path
+    except Exception as e:
+        logger.error(f"Error creating backup: {e}")
+        return None
+
+
+def restore_backup(backup_zip, folder):
+    """Restore a backup to the YAML folder."""
+    backup_path = Path(backup_zip)
+    folder_path = Path(folder)
+    
+    if not backup_path.exists():
+        logger.error(f"Backup {backup_zip} does not exist.")
+        return False
+    
+    # Create temporary folder
+    temp_folder = Path("temp_restore")
+    temp_folder.mkdir(exist_ok=True)
+    
+    try:
+        # Extract zip to temporary folder
+        extract_zip(backup_path, temp_folder)
+        
+        # Remove current folder if it exists
+        if folder_path.exists():
+            shutil.rmtree(folder_path)
+        
+        # Copy files from temporary folder to target folder
+        shutil.copytree(temp_folder, folder_path)
+        
+        # Remove temporary folder
+        shutil.rmtree(temp_folder)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error restoring backup: {e}")
+        return False
+
+
+def list_backups():
+    """List all available backups."""
+    backup_folder = Path("backups")
+    
+    if not backup_folder.exists():
+        return []
+    
+    backups = []
+    
+    for file in backup_folder.glob('*.zip'):
+        backups.append({
+            "name": file.stem,
+            "path": str(file),
+            "size": file.stat().st_size,
+            "created": datetime.fromtimestamp(file.stat().st_mtime)
+        })
+    
+    # Sort by creation time (newest first)
+    backups.sort(key=lambda x: x["created"], reverse=True)
+    
+    return backups
 
 
 def flatten_node(d):
@@ -350,7 +516,7 @@ def main():
         return
 
     st.download_button(
-        "📦 Download Folder as ZIP",
+        "�� Download Folder as ZIP",
         create_zip(context_dir),
         file_name=f"{folder_context}.zip"
     )

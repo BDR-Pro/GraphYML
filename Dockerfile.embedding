@@ -9,6 +9,10 @@ RUN pip install -r requirements.embedding.txt
 # Copy embedding service code
 COPY src/embedding_service.py .
 
+# Environment variables
+ENV MODEL_NAME="all-MiniLM-L6-v2"
+ENV PORT=8000
+
 # Expose port
 EXPOSE 8000
 
