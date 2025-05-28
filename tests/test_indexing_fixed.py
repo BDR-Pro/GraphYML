@@ -2,15 +2,32 @@
 Fixed unit tests for indexing module.
 """
 import unittest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open, PropertyMock
 import os
 import tempfile
 import json
+import pickle
+from collections import defaultdict
 
 from src.models.indexing import (
     BaseIndex, HashIndex, BTreeIndex, FullTextIndex, VectorIndex, IndexManager, IndexType
 )
 from src.models.embeddings import embedding_similarity
+
+
+class MockBaseIndex(BaseIndex):
+    """Mock implementation of BaseIndex for testing."""
+    
+    def __init__(self, name, field):
+        super().__init__(name, field)
+        self.index = defaultdict(list)
+        self.is_built = True
+    
+    def load(self, path):
+        return True
+    
+    def save(self, path):
+        return True
 
 
 class TestIndexingFixed(unittest.TestCase):
@@ -45,6 +62,11 @@ class TestIndexingFixed(unittest.TestCase):
         
         # Create a temporary directory for index files
         self.temp_dir = tempfile.mkdtemp()
+        
+        # Patch BaseIndex to use our mock implementation
+        patcher = patch('src.models.indexing.BaseIndex', MockBaseIndex)
+        self.mock_base_index = patcher.start()
+        self.addCleanup(patcher.stop)
     
     def tearDown(self):
         """Clean up after tests."""
@@ -78,10 +100,14 @@ class TestIndexingFixed(unittest.TestCase):
         # Test delete of non-existent key
         index.update("nonexistent", {}, is_delete=True)
     
-    
-    
-    def test_btree_index_edge_cases(self):
+    @patch('src.models.indexing.BTreeIndex.save')
+    @patch('src.models.indexing.BTreeIndex.load')
+    def test_btree_index_edge_cases(self, mock_load, mock_save):
         """Test BTreeIndex with edge cases."""
+        # Set up mocks
+        mock_save.return_value = True
+        mock_load.return_value = True
+        
         # Create a btree index
         index = BTreeIndex("test_btree", "title")
         
@@ -114,9 +140,9 @@ class TestIndexingFixed(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0], "node1")
     
-    
-    
-    def test_fulltext_index_edge_cases(self):
+    @patch('src.models.indexing.FullTextIndex.save')
+    @patch('src.models.indexing.FullTextIndex.load')
+    def test_fulltext_index_edge_cases(self, mock_load, mock_save):
         """Test FullTextIndex with edge cases."""
         # Set up mocks
         mock_save.return_value = True
@@ -191,9 +217,13 @@ class TestIndexingFixed(unittest.TestCase):
             results = index.search([0.1, 0.2, 0.3], threshold=0.4)
             self.assertEqual(len(results), 3)  # All nodes
     
+    @patch('src.models.indexing.IndexManager.create_index')
     @patch('src.models.indexing.IndexType')
-    def test_index_manager_edge_cases(self, mock_index_type):
+    def test_index_manager_edge_cases(self, mock_index_type, mock_create_index):
         """Test IndexManager with edge cases."""
+        # Set up mocks
+        mock_index_type.__eq__.return_value = False
+        
         # Create an index manager
         manager = IndexManager()
         
@@ -206,7 +236,6 @@ class TestIndexingFixed(unittest.TestCase):
             manager.drop_index("nonexistent")
         
         # Test create_index with invalid type
-        mock_index_type.__eq__.return_value = False
         with self.assertRaises(ValueError):
             manager.create_index("test_invalid", "field", "invalid_type")
         
@@ -215,12 +244,12 @@ class TestIndexingFixed(unittest.TestCase):
         self.assertEqual(results, [])
     
     @patch('src.models.indexing.HashIndex.save')
-    
-    
+    @patch('src.models.indexing.BTreeIndex.save')
+    @patch('src.models.indexing.FullTextIndex.save')
     @patch('src.models.indexing.VectorIndex.save')
     @patch('src.models.indexing.HashIndex.load')
-    
-    
+    @patch('src.models.indexing.BTreeIndex.load')
+    @patch('src.models.indexing.FullTextIndex.load')
     @patch('src.models.indexing.VectorIndex.load')
     @patch('os.path.exists')
     @patch('os.listdir')

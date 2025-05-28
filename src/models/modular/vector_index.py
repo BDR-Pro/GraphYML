@@ -89,4 +89,3 @@ class VectorIndex(BaseIndex):
         
         # Add to index
         self.index[node_id] = field_value
-

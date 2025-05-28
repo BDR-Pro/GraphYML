@@ -33,9 +33,29 @@ CONFIG_PATH = "graph_config.json"
 
 def load_config():
     """Load or initialize configuration file."""
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    # Check if config_path exists and is a file (not a directory)
+    if os.path.exists(CONFIG_PATH) and os.path.isfile(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Error loading config: {e}")
+            # Return default config on error
+            return {
+                "save_path": "saved_yamls",
+                "ollama_url": "http://localhost:11434/api/embeddings",
+                "ollama_model": "all-minilm-l6-v2",
+                "edit_inline": True
+            }
+    elif os.path.exists(CONFIG_PATH) and not os.path.isfile(CONFIG_PATH):
+        # If it exists but is not a file (e.g., it's a directory), use defaults
+        print(f"Warning: {CONFIG_PATH} exists but is not a file. Using default configuration.")
+        return {
+            "save_path": "saved_yamls",
+            "ollama_url": "http://localhost:11434/api/embeddings",
+            "ollama_model": "all-minilm-l6-v2",
+            "edit_inline": True
+        }
     return {
         "save_path": "saved_yamls",
         "ollama_url": "http://localhost:11434/api/embeddings",
@@ -46,8 +66,26 @@ def load_config():
 
 def save_config(config):
     """Save configuration to disk."""
-    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2)
+    # Check if CONFIG_PATH is a directory
+    if os.path.exists(CONFIG_PATH) and not os.path.isfile(CONFIG_PATH):
+        # If it's a directory, remove it and create a file
+        try:
+            import shutil
+            shutil.rmtree(CONFIG_PATH)
+        except (IOError, OSError) as e:
+            print(f"Error removing directory {CONFIG_PATH}: {e}")
+            # Try an alternative path
+            alt_config_path = "graph_config_new.json"
+            print(f"Using alternative config path: {alt_config_path}")
+            with open(alt_config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+            return
+    
+    try:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+    except (IOError, TypeError) as e:
+        print(f"Error saving config: {e}")
 
 
 def create_zip(folder):

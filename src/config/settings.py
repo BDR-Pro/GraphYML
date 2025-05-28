@@ -5,9 +5,13 @@ Handles loading, saving, and accessing application settings.
 import os
 import json
 from pathlib import Path
+from src.utils.config_manager import ConfigManager
 
 # Default configuration path
 CONFIG_PATH = "graph_config.json"
+
+# Create a global config manager instance
+config_manager = ConfigManager(CONFIG_PATH)
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -32,16 +36,13 @@ def load_config(config_path=CONFIG_PATH):
     Returns:
         dict: Configuration dictionary
     """
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                # Merge with defaults to ensure all keys exist
-                return {**DEFAULT_CONFIG, **config}
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"Error loading config: {e}")
-            return DEFAULT_CONFIG
-    return DEFAULT_CONFIG
+    # Use the config manager to load config
+    if config_path != CONFIG_PATH:
+        # If a different path is specified, create a new manager
+        return ConfigManager(config_path).config
+    else:
+        # Otherwise use the global instance
+        return config_manager.config
 
 
 def save_config(config, config_path=CONFIG_PATH):
@@ -55,13 +56,15 @@ def save_config(config, config_path=CONFIG_PATH):
     Returns:
         bool: True if successful, False otherwise
     """
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2)
-        return True
-    except (IOError, TypeError) as e:
-        print(f"Error saving config: {e}")
-        return False
+    if config_path != CONFIG_PATH:
+        # If a different path is specified, create a new manager
+        manager = ConfigManager(config_path)
+        manager.config = config
+        return manager.save_config()
+    else:
+        # Otherwise use the global instance
+        config_manager.config = config
+        return config_manager.save_config()
 
 
 def ensure_directories(config):
@@ -74,12 +77,9 @@ def ensure_directories(config):
     Returns:
         dict: Updated configuration with absolute paths
     """
-    # Ensure save path exists
-    save_path = Path(config["save_path"])
-    save_path.mkdir(parents=True, exist_ok=True)
+    # Create a temporary config manager with the provided config
+    temp_manager = ConfigManager(CONFIG_PATH)
+    temp_manager.config = config
+    temp_manager.ensure_directories()
     
-    # Update config with absolute path
-    config["save_path"] = str(save_path.absolute())
-    
-    return config
-
+    return temp_manager.config

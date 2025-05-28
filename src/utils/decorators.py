@@ -1,57 +1,87 @@
 """
-Decorators module for GraphYML.
-Provides decorators for common functionality.
+Decorator utilities for GraphYML.
+Provides decorators for common patterns like logging, error handling, and timing.
 """
 import time
-import functools
 import logging
-from typing import Callable, Any, Optional
+import functools
+import traceback
+from typing import Callable, Any, TypeVar, cast, Optional
 
-# Get logger
+from src.utils.error_handler import GraphYMLError
+
+# Set up logging
 logger = logging.getLogger(__name__)
 
+# Type variable for generic function return type
+T = TypeVar('T')
 
-def log_function(level: int = logging.DEBUG) -> Callable:
+
+def log_function_call(func: Callable[..., T]) -> Callable[..., T]:
     """
-    Decorator to log function calls and results.
+    Decorator to log function calls.
     
     Args:
-        level: Log level
+        func: Function to decorate
         
     Returns:
-        Callable: Decorator function
+        Callable: Decorated function
     """
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Get function name
-            func_name = func.__name__
-            
-            # Log function call
-            logger.log(level, f"Calling {func_name} with args={args} kwargs={kwargs}")
-            
-            # Call function
-            try:
-                start_time = time.time()
-                result = func(*args, **kwargs)
-                end_time = time.time()
-                
-                # Log function result
-                logger.log(level, f"Result of {func_name}: {result}")
-                logger.log(level, f"Execution time of {func_name}: {end_time - start_time:.4f} seconds")
-                
-                return result
-            except Exception as e:
-                # Log error
-                logger.error(f"Error in {func_name}: {str(e)}", exc_info=True)
-                raise
-        
-        return wrapper
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.debug(f"Calling {func.__name__} with args={args} kwargs={kwargs}")
+        result = func(*args, **kwargs)
+        logger.debug(f"Result of {func.__name__}: {result}")
+        return result
     
-    return decorator
+    return cast(Callable[..., T], wrapper)
 
 
-def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0, exceptions: tuple = (Exception,)) -> Callable:
+def log_errors(func: Callable[..., T]) -> Callable[..., T]:
+    """
+    Decorator to log errors from a function.
+    
+    Args:
+        func: Function to decorate
+        
+    Returns:
+        Callable: Decorated function
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {str(e)}")
+            logger.debug(traceback.format_exc())
+            raise
+    
+    return cast(Callable[..., T], wrapper)
+
+
+def timing(func: Callable[..., T]) -> Callable[..., T]:
+    """
+    Decorator to time function execution.
+    
+    Args:
+        func: Function to decorate
+        
+    Returns:
+        Callable: Decorated function
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        logger.debug(f"{func.__name__} took {end_time - start_time:.4f} seconds")
+        return result
+    
+    return cast(Callable[..., T], wrapper)
+
+
+def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0, 
+          exceptions: tuple = (Exception,)) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator to retry a function on failure.
     
@@ -64,127 +94,79 @@ def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0, excep
     Returns:
         Callable: Decorator function
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Get function name
-            func_name = func.__name__
-            
-            # Try function
-            attempt = 1
+            attempts = 0
             current_delay = delay
             
-            while attempt <= max_attempts:
+            while attempts < max_attempts:
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
-                    # Log error
-                    logger.warning(f"Attempt {attempt}/{max_attempts} for {func_name} failed: {str(e)}")
+                    attempts += 1
                     
-                    # Check if this is the last attempt
-                    if attempt == max_attempts:
-                        logger.error(f"All {max_attempts} attempts for {func_name} failed")
+                    if attempts >= max_attempts:
+                        logger.error(f"Failed after {attempts} attempts: {str(e)}")
                         raise
                     
-                    # Wait before retrying
-                    logger.info(f"Retrying {func_name} in {current_delay:.2f} seconds")
+                    logger.warning(f"Attempt {attempts} failed: {str(e)}. Retrying in {current_delay:.2f} seconds...")
                     time.sleep(current_delay)
-                    
-                    # Increase delay
                     current_delay *= backoff
-                    
-                    # Increment attempt counter
-                    attempt += 1
         
-        return wrapper
+        return cast(Callable[..., T], wrapper)
     
     return decorator
 
 
-def cache_result(ttl: Optional[float] = None) -> Callable:
-    """
-    Decorator to cache function results.
-    
-    Args:
-        ttl: Time to live in seconds (None for no expiration)
-        
-    Returns:
-        Callable: Decorator function
-    """
-    def decorator(func: Callable) -> Callable:
-        # Create cache
-        cache = {}
-        
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Create cache key
-            key = str(args) + str(kwargs)
-            
-            # Check if result is in cache
-            if key in cache:
-                result, timestamp = cache[key]
-                
-                # Check if result has expired
-                if ttl is None or time.time() - timestamp < ttl:
-                    logger.debug(f"Cache hit for {func.__name__}")
-                    return result
-            
-            # Call function
-            result = func(*args, **kwargs)
-            
-            # Cache result
-            cache[key] = (result, time.time())
-            
-            return result
-        
-        # Add clear_cache method
-        def clear_cache():
-            cache.clear()
-            logger.debug(f"Cache cleared for {func.__name__}")
-        
-        wrapper.clear_cache = clear_cache
-        
-        return wrapper
-    
-    return decorator
-
-
-def validate_args(**validators) -> Callable:
+def validate_args(validator: Callable[..., bool]) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator to validate function arguments.
     
     Args:
-        **validators: Validator functions for arguments
+        validator: Function to validate arguments
         
     Returns:
         Callable: Decorator function
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Get function signature
-            func_name = func.__name__
+            if not validator(*args, **kwargs):
+                raise ValueError(f"Invalid arguments for {func.__name__}")
             
-            # Combine args and kwargs
-            arg_names = func.__code__.co_varnames[:func.__code__.co_argcount]
-            all_args = dict(zip(arg_names, args))
-            all_args.update(kwargs)
-            
-            # Validate arguments
-            for arg_name, validator in validators.items():
-                if arg_name in all_args:
-                    arg_value = all_args[arg_name]
-                    
-                    # Run validator
-                    if not validator(arg_value):
-                        error_msg = f"Invalid value for {arg_name}: {arg_value}"
-                        logger.error(error_msg)
-                        raise ValueError(error_msg)
-            
-            # Call function
             return func(*args, **kwargs)
         
-        return wrapper
+        return cast(Callable[..., T], wrapper)
     
     return decorator
 
+
+def require_auth(permission: Optional[str] = None) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator to require authentication.
+    
+    Args:
+        permission: Required permission
+        
+    Returns:
+        Callable: Decorator function
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Check if user is in kwargs
+            user = kwargs.get("user")
+            
+            if not user:
+                raise GraphYMLError("Authentication required")
+            
+            # Check permission if specified
+            if permission and not user.has_permission(permission):
+                raise GraphYMLError(f"Permission denied: {permission}")
+            
+            return func(*args, **kwargs)
+        
+        return cast(Callable[..., T], wrapper)
+    
+    return decorator
