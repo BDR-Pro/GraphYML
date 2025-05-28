@@ -1,6 +1,7 @@
-version: '3'
+version: '3.8'
 
 services:
+  # Main GraphYML application with Dash
   dash-app:
     build:
       context: .
@@ -10,18 +11,74 @@ services:
     volumes:
       - ./saved_yamls:/app/saved_yamls
       - ./backups:/app/backups
+      - ./graph_config.json:/app/graph_config.json
+    environment:
+      # Choose one of the embedding providers:
+      # 1. For embedding-service: EMBEDDING_PROVIDER=service and EMBEDDING_SERVICE=http://embedding-service:8000/api/embeddings
+      # 2. For direct Ollama: EMBEDDING_PROVIDER=ollama and OLLAMA_URL=http://ollama:11434/api
+      # 3. For direct Hugging Face: EMBEDDING_PROVIDER=sentence_transformers
+      # 4. For OpenAI: EMBEDDING_PROVIDER=openai and OPENAI_API_KEY=your-key
+      - EMBEDDING_PROVIDER=service
+      - EMBEDDING_SERVICE=http://embedding-service:8000/api/embeddings
+      # Fallback provider if service is unavailable
+      - FALLBACK_EMBEDDING_PROVIDER=sentence_transformers
+    networks:
+      - graphyml-network
+    restart: unless-stopped
+    # Choose your dependencies based on embedding provider
     depends_on:
       - embedding-service
-    environment:
-      - EMBEDDING_SERVICE_URL=http://embedding-service:8000
+      # Uncomment if using Ollama directly
+      # - ollama
 
+  # Embedding service using Hugging Face models
+  # Only needed if using EMBEDDING_PROVIDER=service
   embedding-service:
     build:
       context: .
       dockerfile: Dockerfile.embedding
     ports:
       - "8000:8000"
+    volumes:
+      - embedding-cache:/root/.cache/huggingface
     environment:
       - MODEL_NAME=all-MiniLM-L6-v2
       - PORT=8000
+    networks:
+      - graphyml-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # Ollama service for local LLM embeddings
+  # Can be used directly or via embedding-service
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - graphyml-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+
+networks:
+  graphyml-network:
+    driver: bridge
+
+volumes:
+  embedding-cache:
+  ollama-models:
 
