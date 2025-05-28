@@ -9,9 +9,9 @@ services:
     ports:
       - "8050:8050"
     volumes:
-      - ./saved_yamls:/app/saved_yamls
-      - ./backups:/app/backups
-      - ./graph_config.json:/app/graph_config.json
+      - .data/saved_yamls:/app/saved_yamls
+      - .data/backups:/app/backups
+      - .data/graph_config.json:/app/graph_config.json
     environment:
       # Choose one of the embedding providers:
       # 1. For embedding-service: EMBEDDING_PROVIDER=service and EMBEDDING_SERVICE=http://embedding-service:8000/api/embeddings
