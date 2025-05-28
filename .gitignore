@@ -3,3 +3,5 @@ cleaned_data/converted_yml
 *.pyc
 .coverage
 .pytest_cache/
+*.yaml
+.coverage
