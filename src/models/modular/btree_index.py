@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 import bisect
 
 from .base_index import BaseIndex
+from src.utils.index_utils import make_hashable, normalize_query
 
 
 class BTreeIndex(BaseIndex):
@@ -59,16 +60,22 @@ class BTreeIndex(BaseIndex):
         if not self.is_built:
             return []
         
+        # Normalize query for consistent comparison
+        normalized_query = normalize_query(query)
+        
+        # Make query hashable for dictionary lookup
+        hashable_query = make_hashable(normalized_query)
+        
         if prefix:
             # Find all keys that start with the query
             results = []
             for key in self.sorted_keys:
-                if isinstance(key, str) and key.startswith(query):
+                if isinstance(key, str) and isinstance(hashable_query, str) and key.startswith(hashable_query):
                     results.extend(self.value_to_nodes.get(key, []))
             return results
         else:
             # Exact match
-            return self.value_to_nodes.get(query, [])
+            return self.value_to_nodes.get(hashable_query, [])
     
     def update(self, node_id: str, node_data: Dict[str, Any], is_delete: bool = False) -> None:
         """
@@ -103,17 +110,20 @@ class BTreeIndex(BaseIndex):
         if field_value is None:
             return
         
+        # Make field value hashable for dictionary keys
+        hashable_value = make_hashable(field_value)
+        
         # Add to index
-        self.index[node_id] = field_value
+        self.index[node_id] = hashable_value
         
         # Add to value_to_nodes
-        if field_value not in self.value_to_nodes:
-            self.value_to_nodes[field_value] = []
+        if hashable_value not in self.value_to_nodes:
+            self.value_to_nodes[hashable_value] = []
             # Add to sorted_keys
-            bisect.insort(self.sorted_keys, field_value)
+            bisect.insort(self.sorted_keys, hashable_value)
         
-        if node_id not in self.value_to_nodes[field_value]:
-            self.value_to_nodes[field_value].append(node_id)
+        if node_id not in self.value_to_nodes[hashable_value]:
+            self.value_to_nodes[hashable_value].append(node_id)
     
     def _get_serializable_index(self) -> Dict[str, Any]:
         """
@@ -138,4 +148,3 @@ class BTreeIndex(BaseIndex):
         self.index = serialized_index.get("index", {})
         self.sorted_keys = serialized_index.get("sorted_keys", [])
         self.value_to_nodes = serialized_index.get("value_to_nodes", {})
-

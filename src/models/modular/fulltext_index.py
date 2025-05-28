@@ -1,11 +1,12 @@
 """
 Full-text index implementation for modular indexing system.
 """
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Union
 import re
 from collections import defaultdict
 
 from .base_index import BaseIndex
+from src.utils.index_utils import tokenize_text, extract_phrases
 
 
 class FullTextIndex(BaseIndex):
@@ -20,8 +21,8 @@ class FullTextIndex(BaseIndex):
             field: Field to index
         """
         super().__init__(name, field)
-        self.inverted_index = defaultdict(list)  # Map of term -> list of node_ids
-        self.node_terms = {}  # Map of node_id -> list of terms
+        self.token_to_nodes = defaultdict(list)  # Map of token -> list of (node_id, score)
+        self.node_tokens = defaultdict(list)  # Map of node_id -> list of tokens
     
     def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
         """
@@ -31,8 +32,8 @@ class FullTextIndex(BaseIndex):
             graph: Graph to build index from
         """
         # Clear the index
-        self.inverted_index = defaultdict(list)
-        self.node_terms = {}
+        self.token_to_nodes = defaultdict(list)
+        self.node_tokens = defaultdict(list)
         
         # Build the index
         for node_id, node_data in graph.items():
@@ -54,16 +55,57 @@ class FullTextIndex(BaseIndex):
         if not self.is_built:
             return []
         
-        # Check for phrase search
-        phrase_match = re.search(r'"([^"]+)"', query)
-        if phrase_match:
-            # Phrase search
-            phrase = phrase_match.group(1)
-            return self._phrase_search(phrase)
+        # Extract phrases (quoted text)
+        phrases = extract_phrases(query)
         
-        # Normal search
-        terms = self._tokenize(query)
-        return self._term_search(terms)
+        # Remove phrases from query
+        for phrase in phrases:
+            query = query.replace(f'"{phrase}"', '')
+        
+        # Tokenize query
+        tokens = tokenize_text(query)
+        
+        # Combine tokens and phrases
+        all_terms = tokens + phrases
+        
+        if not all_terms:
+            return []
+        
+        # Find nodes containing all terms
+        node_scores = defaultdict(float)
+        
+        # First, find nodes containing all tokens
+        for term in all_terms:
+            for node_id, score in self.token_to_nodes.get(term, []):
+                node_scores[node_id] += score
+        
+        # Filter nodes that don't contain all terms
+        if kwargs.get('require_all_terms', False):
+            for node_id in list(node_scores.keys()):
+                for term in all_terms:
+                    if node_id not in [n for n, _ in self.token_to_nodes.get(term, [])]:
+                        del node_scores[node_id]
+                        break
+        
+        # Check for phrase matches
+        if phrases:
+            for node_id in list(node_scores.keys()):
+                node_text = self._get_node_text(node_id)
+                if node_text:
+                    for phrase in phrases:
+                        if phrase.lower() in node_text.lower():
+                            # Boost score for phrase match
+                            node_scores[node_id] += 1.0
+                        elif kwargs.get('require_phrases', False):
+                            # Remove node if it doesn't contain the phrase
+                            del node_scores[node_id]
+                            break
+        
+        # Sort by score
+        results = [(node_id, score) for node_id, score in node_scores.items()]
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
     
     def update(self, node_id: str, node_data: Dict[str, Any], is_delete: bool = False) -> None:
         """
@@ -76,124 +118,60 @@ class FullTextIndex(BaseIndex):
         """
         # Handle delete
         if is_delete:
-            if node_id in self.node_terms:
-                # Remove from inverted_index
-                for term in self.node_terms[node_id]:
-                    if node_id in self.inverted_index[term]:
-                        self.inverted_index[term].remove(node_id)
-                        if not self.inverted_index[term]:
-                            del self.inverted_index[term]
-                
-                # Remove from node_terms
-                del self.node_terms[node_id]
+            # Remove from token_to_nodes
+            for token in self.node_tokens.get(node_id, []):
+                self.token_to_nodes[token] = [(n, s) for n, s in self.token_to_nodes[token] if n != node_id]
+                if not self.token_to_nodes[token]:
+                    del self.token_to_nodes[token]
+            
+            # Remove from node_tokens
+            if node_id in self.node_tokens:
+                del self.node_tokens[node_id]
+            
             return
         
         # Get field value
         field_value = self._get_field_value(node_data)
         
         # Skip if field not found or not a string
-        if field_value is None or not isinstance(field_value, str):
+        if not field_value or not isinstance(field_value, str):
             return
         
-        # Tokenize the field value
-        terms = self._tokenize(field_value)
+        # Tokenize field value
+        tokens = tokenize_text(field_value)
         
-        # Remove old terms if node already indexed
-        if node_id in self.node_terms:
-            old_terms = self.node_terms[node_id]
-            for term in old_terms:
-                if node_id in self.inverted_index[term]:
-                    self.inverted_index[term].remove(node_id)
-                    if not self.inverted_index[term]:
-                        del self.inverted_index[term]
+        # Remove old tokens
+        for token in self.node_tokens.get(node_id, []):
+            self.token_to_nodes[token] = [(n, s) for n, s in self.token_to_nodes[token] if n != node_id]
+            if not self.token_to_nodes[token]:
+                del self.token_to_nodes[token]
         
-        # Add new terms
-        self.node_terms[node_id] = terms
-        for term in terms:
-            if node_id not in self.inverted_index[term]:
-                self.inverted_index[term].append(node_id)
+        # Add new tokens
+        self.node_tokens[node_id] = tokens
+        
+        # Calculate token frequencies
+        token_freq = defaultdict(int)
+        for token in tokens:
+            token_freq[token] += 1
+        
+        # Add to token_to_nodes with TF score
+        for token, freq in token_freq.items():
+            score = freq / len(tokens)  # Term frequency
+            self.token_to_nodes[token].append((node_id, score))
     
-    def _tokenize(self, text: str) -> List[str]:
+    def _get_node_text(self, node_id: str) -> Optional[str]:
         """
-        Tokenize text into terms.
+        Get the text for a node.
         
         Args:
-            text: Text to tokenize
+            node_id: ID of the node
             
         Returns:
-            List of terms
+            Optional[str]: Node text
         """
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Remove punctuation
-        text = re.sub(r'[^\w\s]', ' ', text)
-        
-        # Split into terms
-        terms = text.split()
-        
-        return terms
-    
-    def _term_search(self, terms: List[str]) -> List[Tuple[str, float]]:
-        """
-        Search for terms.
-        
-        Args:
-            terms: Terms to search for
-            
-        Returns:
-            List of (node_id, score) tuples
-        """
-        # Get nodes for each term
-        term_nodes = {}
-        for term in terms:
-            term_nodes[term] = set(self.inverted_index.get(term, []))
-        
-        # Calculate scores
-        scores = defaultdict(float)
-        for term, nodes in term_nodes.items():
-            for node_id in nodes:
-                scores[node_id] += 1.0 / len(terms)
-        
-        # Sort by score
-        results = [(node_id, score) for node_id, score in scores.items()]
-        results.sort(key=lambda x: x[1], reverse=True)
-        
-        return results
-    
-    def _phrase_search(self, phrase: str) -> List[Tuple[str, float]]:
-        """
-        Search for a phrase.
-        
-        Args:
-            phrase: Phrase to search for
-            
-        Returns:
-            List of (node_id, score) tuples
-        """
-        # Tokenize the phrase
-        terms = self._tokenize(phrase)
-        
-        # Get nodes for each term
-        term_nodes = {}
-        for term in terms:
-            term_nodes[term] = set(self.inverted_index.get(term, []))
-        
-        # Find nodes that contain all terms
-        if not term_nodes:
-            return []
-        
-        # Start with nodes from first term
-        common_nodes = term_nodes.get(terms[0], set())
-        
-        # Intersect with nodes from other terms
-        for term in terms[1:]:
-            common_nodes &= term_nodes.get(term, set())
-        
-        # Calculate scores (all nodes get score 1.0 for phrase match)
-        results = [(node_id, 1.0) for node_id in common_nodes]
-        
-        return results
+        # This is a simplified implementation
+        # In a real system, you would retrieve the text from the graph
+        return ' '.join(self.node_tokens.get(node_id, []))
     
     def _get_serializable_index(self) -> Dict[str, Any]:
         """
@@ -203,8 +181,8 @@ class FullTextIndex(BaseIndex):
             Dict[str, Any]: Serializable index
         """
         return {
-            "inverted_index": dict(self.inverted_index),
-            "node_terms": self.node_terms
+            "token_to_nodes": dict(self.token_to_nodes),
+            "node_tokens": dict(self.node_tokens)
         }
     
     def _set_index_from_serialized(self, serialized_index: Dict[str, Any]) -> None:
@@ -214,9 +192,5 @@ class FullTextIndex(BaseIndex):
         Args:
             serialized_index: Serialized index
         """
-        self.inverted_index = defaultdict(list)
-        for term, nodes in serialized_index.get("inverted_index", {}).items():
-            self.inverted_index[term] = nodes
-        
-        self.node_terms = serialized_index.get("node_terms", {})
-
+        self.token_to_nodes = defaultdict(list, serialized_index.get("token_to_nodes", {}))
+        self.node_tokens = defaultdict(list, serialized_index.get("node_tokens", {}))
