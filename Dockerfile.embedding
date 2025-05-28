@@ -1,17 +1,21 @@
-FROM python:3.10-slim
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Copy requirements first to leverage Docker cache
 COPY requirements.embedding.txt .
 RUN pip install --no-cache-dir -r requirements.embedding.txt
 
-# Copy embedding service code
+# Copy the embedding service
 COPY src/embedding_service.py .
 
-# Expose port
+# Environment variables
+ENV MODEL_NAME="all-MiniLM-L6-v2"
+ENV PORT=8000
+
+# Expose the port the service runs on
 EXPOSE 8000
 
-# Run the embedding service
+# Command to run the service
 CMD ["python", "embedding_service.py"]
 
