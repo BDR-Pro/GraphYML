@@ -23,6 +23,21 @@ class FullTextIndex(BaseIndex):
         super().__init__(name, field)
         self.token_to_nodes = defaultdict(list)  # Map of token -> list of (node_id, score)
         self.node_tokens = defaultdict(list)  # Map of node_id -> list of tokens
+        # Aliases for backward compatibility
+        self.inverted_index = self.token_to_nodes
+        self.node_terms = self.node_tokens
+    
+    def _tokenize(self, text: str) -> List[str]:
+        """
+        Tokenize text into words.
+        
+        Args:
+            text: Text to tokenize
+            
+        Returns:
+            List[str]: List of tokens
+        """
+        return tokenize_text(text)
     
     def build(self, graph: Dict[str, Dict[str, Any]]) -> None:
         """
@@ -182,7 +197,9 @@ class FullTextIndex(BaseIndex):
         """
         return {
             "token_to_nodes": dict(self.token_to_nodes),
-            "node_tokens": dict(self.node_tokens)
+            "node_tokens": dict(self.node_tokens),
+            "inverted_index": dict(self.token_to_nodes),  # Alias for backward compatibility
+            "node_terms": dict(self.node_tokens)  # Alias for backward compatibility
         }
     
     def _set_index_from_serialized(self, serialized_index: Dict[str, Any]) -> None:
@@ -192,5 +209,17 @@ class FullTextIndex(BaseIndex):
         Args:
             serialized_index: Serialized index
         """
-        self.token_to_nodes = defaultdict(list, serialized_index.get("token_to_nodes", {}))
-        self.node_tokens = defaultdict(list, serialized_index.get("node_tokens", {}))
+        # Try to load from new format first, then fall back to old format
+        if "token_to_nodes" in serialized_index:
+            self.token_to_nodes = defaultdict(list, serialized_index.get("token_to_nodes", {}))
+        elif "inverted_index" in serialized_index:
+            self.token_to_nodes = defaultdict(list, serialized_index.get("inverted_index", {}))
+            
+        if "node_tokens" in serialized_index:
+            self.node_tokens = defaultdict(list, serialized_index.get("node_tokens", {}))
+        elif "node_terms" in serialized_index:
+            self.node_tokens = defaultdict(list, serialized_index.get("node_terms", {}))
+            
+        # Update aliases
+        self.inverted_index = self.token_to_nodes
+        self.node_terms = self.node_tokens

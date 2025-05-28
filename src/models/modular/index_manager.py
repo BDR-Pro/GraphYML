@@ -25,15 +25,20 @@ class IndexType(Enum):
 class IndexManager:
     """Manager for multiple indexes."""
     
-    def __init__(self, index_dir: Optional[str] = None):
+    def __init__(self, graph=None, config=None, index_dir: Optional[str] = None, **kwargs):
         """
         Initialize the index manager.
         
         Args:
+            graph: Optional graph data
+            config: Optional configuration
             index_dir: Directory to store indexes
+            **kwargs: Additional parameters
         """
         self.indexes = {}  # Map of name -> index
         self.index_dir = index_dir
+        self.graph = graph
+        self.config = config or {}
     
     def create_index(self, name: str, field: str, index_type: Union[IndexType, str]) -> BaseIndex:
         """
@@ -243,3 +248,4 @@ class IndexManager:
                     success = False
         
         return success
+

@@ -74,8 +74,14 @@ class BTreeIndex(BaseIndex):
                     results.extend(self.value_to_nodes.get(key, []))
             return results
         else:
-            # Exact match
-            return self.value_to_nodes.get(hashable_query, [])
+            # Exact match - try both original and normalized query
+            results = self.value_to_nodes.get(hashable_query, [])
+            if not results and isinstance(query, str):
+                # Try case-insensitive match for strings
+                for key, nodes in self.value_to_nodes.items():
+                    if isinstance(key, str) and key.lower() == query.lower():
+                        results.extend(nodes)
+            return results
     
     def update(self, node_id: str, node_data: Dict[str, Any], is_delete: bool = False) -> None:
         """
@@ -119,8 +125,9 @@ class BTreeIndex(BaseIndex):
         # Add to value_to_nodes
         if hashable_value not in self.value_to_nodes:
             self.value_to_nodes[hashable_value] = []
-            # Add to sorted_keys
-            bisect.insort(self.sorted_keys, hashable_value)
+            # Add to sorted_keys - will be properly sorted in build()
+            if hashable_value not in self.sorted_keys:
+                self.sorted_keys.append(hashable_value)
         
         if node_id not in self.value_to_nodes[hashable_value]:
             self.value_to_nodes[hashable_value].append(node_id)
