@@ -34,13 +34,13 @@ Several embedding models can be integrated with GraphYML:
 
 ### Implementation in GraphYML
 
-The `VectorIndex` class in `src/models/indexing.py` uses embeddings for semantic search:
+The `VectorIndex` class in the modular indexing system uses embeddings for semantic search:
 
 ```python
 class VectorIndex(BaseIndex):
     """Vector index for semantic search."""
     
-    def search(self, query_vector, threshold=0.7, limit=10):
+    def search(self, query_vector: List[float], threshold: float = 0.7, limit: int = 10, **kwargs) -> List[Tuple[str, float]]:
         """
         Search the index using vector similarity.
         
@@ -48,6 +48,7 @@ class VectorIndex(BaseIndex):
             query_vector: Vector to search for
             threshold: Similarity threshold (0-1)
             limit: Maximum number of results
+            **kwargs: Additional search parameters
             
         Returns:
             List of (node_id, similarity) tuples
@@ -57,11 +58,10 @@ class VectorIndex(BaseIndex):
         
         results = []
         
-        for node_id, node_data in self.index.items():
-            if self.field in node_data:
-                similarity = embedding_similarity(query_vector, node_data[self.field])
-                if similarity >= threshold:
-                    results.append((node_id, similarity))
+        for node_id, embedding in self.index.items():
+            similarity = embedding_similarity(query_vector, embedding)
+            if similarity >= threshold:
+                results.append((node_id, similarity))
         
         # Sort by similarity (descending)
         results.sort(key=lambda x: x[1], reverse=True)
@@ -163,7 +163,7 @@ def smart_generate(prompt, use_local=True, local_model=None, local_tokenizer=Non
 
 ### Embedding Implementation
 
-1. Add a configurable embedding provider in `src/models/embeddings.py`:
+1. Add a configurable embedding provider:
 
 ```python
 class EmbeddingProvider:
@@ -199,7 +199,7 @@ class EmbeddingProvider:
 
 ### LLM Implementation
 
-1. Add an LLM service in `src/services/llm_service.py`:
+1. Add an LLM service:
 
 ```python
 class LLMService:
